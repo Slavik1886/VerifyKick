@@ -3,19 +3,29 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import os
 from datetime import datetime, timedelta
+import asyncio
 
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
 intents.message_content = True
-intents.voice_states = True  # Для відстеження голосових каналів
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Словники для відстеження активності
 voice_time_tracker = {}
-tracked_channels = {}  # {guild_id: {"voice_channel": voice_channel_id, "log_channel": log_channel_id}}
-warning_sent = set()   # Для відстеження вже надісланих попереджень
+tracked_channels = {}  # {guild_id: {"voice_channel": voice_channel_id, "log_channel": log_channel_id, "delete_after": minutes}}
+warning_sent = set()
+
+async def delete_after(message, minutes):
+    if minutes <= 0:
+        return
+    await asyncio.sleep(minutes * 60)
+    try:
+        await message.delete()
+    except Exception as e:
+        print(f"Не вдалося видалити повідомлення: {e}")
 
 @bot.event
 async def on_ready():
@@ -54,25 +64,24 @@ async def check_voice_activity():
                 
             time_in_channel = current_time - voice_time_tracker[member_key]
             
-            # Попередження через 10 хвилин
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
                     await member.send(
-                        "⚠️ Ви знаходитесь на каналі для неактивних учасників більше 10 хвилин. "
+                        "⚠️ Ви знаходитесь у голосовому каналі більше 10 хвилин. "
                         "✅Будьте активні або вийдіть, інакше ви будете автоматично відключені."
                     )
                     warning_sent.add(member_key)
                 except Exception as e:
                     print(f"Не вдалося надіслати попередження {member}: {e}")
             
-            # Відключення через 15 хвилин
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None, reason="Автоматичне відключення за неактивність")
-                    await log_channel.send(
+                    msg = await log_channel.send(
                         f"🔴 {member.mention} був відключений з {voice_channel.mention} "
                         f"через надто тривале перебування ({time_in_channel.seconds//60} хв)."
                     )
+                    bot.loop.create_task(delete_after(msg, data["delete_after"]))
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
                 except Exception as e:
@@ -90,28 +99,32 @@ async def on_voice_state_update(member, before, after):
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосовому каналі")
 @app_commands.describe(
     voice_channel="Голосовий канал для відстеження",
-    log_channel="Канал для повідомлень про відключення"
+    log_channel="Канал для повідомлень про відключення",
+    delete_after="Через скільки хвилин видаляти повідомлення (0 - не видаляти)"
 )
 async def track_voice(interaction: discord.Interaction, 
                      voice_channel: discord.VoiceChannel, 
-                     log_channel: discord.TextChannel):
+                     log_channel: discord.TextChannel,
+                     delete_after: int = 5):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Ця команда доступна тільки адміністраторам.", ephemeral=True)
         return
     
     tracked_channels[interaction.guild_id] = {
         "voice_channel": voice_channel.id,
-        "log_channel": log_channel.id
+        "log_channel": log_channel.id,
+        "delete_after": delete_after
     }
     
     await interaction.response.send_message(
         f"🔊 Відстежування голосового каналу {voice_channel.mention} активовано.\n"
-        f"📝 Повідомлення про відключення будуть надходити у {log_channel.mention}.\n"
+        f"📝 Повідомлення про відключення будуть надходити у {log_channel.mention}\n"
+        f"⏳ Повідомлення будуть автоматично видалятися через {delete_after} хвилин\n"
         "Користувачі отримають попередження через 10 хвилин та будуть відключені через 15 хвилин.",
         ephemeral=True
     )
 
-# ========== ІСНУЮЧІ КОМАНДИ (БЕЗ ЗМІН) ==========
+# ========== ІСНУЮЧІ КОМАНДИ ==========
 @bot.tree.command(name="remove_default_only", description="Видаляє користувачів, які мають тільки роль @everyone")
 async def remove_default_only(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
@@ -208,7 +221,6 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-# Запуск бота
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     raise ValueError("Не знайдено змінну середовища DISCORD_TOKEN")
