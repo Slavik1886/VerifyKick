@@ -172,4 +172,4 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-bot.run(os.getenv('DISCORD_TOKEN'))
+bot.run(os.getenv(MTM1NzU4ODQ3MTg3NDcxNTY2OA.GNQT3Y.ND9gOXADoG2IU1I3BgCQpgJ-iXA89U-Du9HX-c))
