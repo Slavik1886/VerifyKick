@@ -12,6 +12,7 @@ intents.members = True
 intents.guilds = True
 intents.message_content = True
 intents.voice_states = True
+intents.invites = True  # Необхідний intent для роботи з запрошеннями
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -22,22 +23,34 @@ warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
 active_stats_tracking = {}
-invite_roles = {}  # {guild_id: {invite_code: role_id}}
 
-# Функції для збереження даних про запрошення
-def load_invite_roles():
+# Система ролей за запрошеннями
+invite_roles = {}  # {guild_id: {invite_code: role_id}}
+invite_cache = {}  # {guild_id: {invite_code: uses}}
+
+def load_invite_data():
     try:
         with open('invite_roles.json', 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-def save_invite_roles():
+def save_invite_data():
     with open('invite_roles.json', 'w') as f:
         json.dump(invite_roles, f)
 
 # Завантажуємо дані при старті
-invite_roles = load_invite_roles()
+invite_roles = load_invite_data()
+
+async def update_invite_cache(guild):
+    """Оновлюємо кеш запрошень для сервера"""
+    try:
+        invites = await guild.invites()
+        invite_cache[guild.id] = {invite.code: invite.uses for invite in invites}
+    except discord.Forbidden:
+        print(f"Немає дозволу на перегляд запрошень для сервера {guild.name}")
+    except Exception as e:
+        print(f"Помилка оновлення кешу запрошень: {e}")
 
 async def delete_after(message, minutes):
     if minutes <= 0: return
@@ -140,29 +153,62 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
+    """Обробка нового учасника сервера"""
+    if member.bot:
+        return
+    
+    guild = member.guild
     try:
-        invites_before = {invite.code: invite.uses for invite in await member.guild.invites()}
-        await asyncio.sleep(5)  # Чекаємо оновлення статистики
+        # Отримуємо поточні запрошення
+        current_invites = await guild.invites()
         
-        invites_after = {invite.code: invite.uses for invite in await member.guild.invites()}
-        
-        for code, uses_before in invites_before.items():
-            uses_after = invites_after.get(code, 0)
-            if uses_after > uses_before:
-                guild_id = str(member.guild.id)
-                if guild_id in invite_roles and code in invite_roles[guild_id]:
-                    role_id = invite_roles[guild_id][code]
-                    role = member.guild.get_role(role_id)
-                    if role:
-                        await member.add_roles(role)
-                        print(f"Надано роль {role.name} через запрошення {code}")
+        # Шукаємо запрошення, кількість використань якого збільшилась
+        used_invite = None
+        for invite in current_invites:
+            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+            if invite.uses > cached_uses:
+                used_invite = invite
                 break
+        
+        if used_invite:
+            # Оновлюємо кеш
+            await update_invite_cache(guild)
+            
+            # Перевіряємо чи є роль для цього запрошення
+            guild_roles = invite_roles.get(str(guild.id), {})
+            role_id = guild_roles.get(used_invite.code)
+            
+            if role_id:
+                role = guild.get_role(role_id)
+                if role:
+                    try:
+                        await member.add_roles(role)
+                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
+                    except discord.Forbidden:
+                        print(f"Немає дозволу надавати роль {role.name}")
+                    except Exception as e:
+                        print(f"Помилка надання ролі: {e}")
     except Exception as e:
-        print(f"Помилка при наданні ролі: {e}")
+        print(f"Помилка обробки нового учасника: {e}")
+
+@bot.event
+async def on_invite_create(invite):
+    """Оновлюємо кеш при створенні нового запрошення"""
+    await update_invite_cache(invite.guild)
+
+@bot.event
+async def on_invite_delete(invite):
+    """Оновлюємо кеш при видаленні запрошення"""
+    await update_invite_cache(invite.guild)
 
 @bot.event
 async def on_ready():
     print(f'Бот {bot.user} онлайн!')
+    
+    # Ініціалізуємо кеш запрошень для всіх серверів
+    for guild in bot.guilds:
+        await update_invite_cache(guild)
+    
     try:
         synced = await bot.tree.sync()
         print(f"Синхронізовано {len(synced)} команд")
@@ -182,29 +228,36 @@ async def on_ready():
     role="Роль для надання"
 )
 async def assign_role_to_invite(interaction: discord.Interaction, invite: str, role: discord.Role):
+    """Команда для прив'язки ролі до запрошення"""
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
-        return
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
     
     try:
+        # Перевіряємо чи існує таке запрошення
         invites = await interaction.guild.invites()
-        if not any(i.code == invite for i in invites):
-            await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
-            return
+        if not any(inv.code == invite for inv in invites):
+            return await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
         
+        # Додаємо до словника
         guild_id = str(interaction.guild.id)
         if guild_id not in invite_roles:
             invite_roles[guild_id] = {}
         
         invite_roles[guild_id][invite] = role.id
-        save_invite_roles()  # Зберігаємо зміни
+        save_invite_data()
+        
+        # Оновлюємо кеш
+        await update_invite_cache(interaction.guild)
         
         await interaction.response.send_message(
-            f"✅ Користувачі з запрошення {invite} отримуватимуть роль {role.mention}",
+            f"✅ Користувачі, які прийдуть через запрошення `{invite}`, отримуватимуть роль {role.mention}",
             ephemeral=True
         )
     except Exception as e:
-        await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+        await interaction.response.send_message(
+            f"❌ Помилка: {str(e)}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
 @app_commands.describe(
@@ -311,7 +364,7 @@ async def list_no_roles(interaction: discord.Interaction):
     
     await interaction.response.defer(ephemeral=True)
     members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
-               if not m.bot and len(m.roles) == 1]
+               if not m.bot and len(member.roles) == 1]
     
     if not members:
         await interaction.followup.send("Немає таких користувачів", ephemeral=True)
@@ -343,5 +396,5 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
-    raise ValueError("Відсутній токен")
+    raise ValueError("Відсутній токен Discord")
 bot.run(TOKEN)
