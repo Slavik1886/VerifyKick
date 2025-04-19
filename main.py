@@ -16,20 +16,19 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Системи відстеження
 voice_time_tracker = {}
-tracked_channels = {}  # Для відстеження неактивності
+tracked_channels = {}
 warning_sent = set()
-voice_activity = defaultdict(timedelta)  # Для статистики активності
-active_stats_tracking = {}  # Для автоматичної статистики
+voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
+active_stats_tracking = {}
+invite_roles = {}  # {guild_id: {invite_code: role_id}}
 
-# Допоміжні функції
 async def delete_after(message, minutes):
     if minutes <= 0: return
     await asyncio.sleep(minutes * 60)
     try: await message.delete()
     except: pass
 
-# Фонові задачі
 @tasks.loop(minutes=1)
 async def update_voice_activity():
     global last_activity_update
@@ -56,7 +55,7 @@ async def send_voice_activity_stats():
         if not sorted_users: continue
             
         embed = discord.Embed(
-            title=f"🏆 Топ-{data['count']} активних у голосових каналах (12 годин)",
+            title=f"🏆 Топ-{data['count']} активних у голосових каналах",
             color=discord.Color.blurple(),
             timestamp=datetime.utcnow()
         )
@@ -74,7 +73,7 @@ async def send_voice_activity_stats():
         
         try: 
             await channel.send(embed=embed)
-            voice_activity.clear()  # Очищаємо статистику після відправки
+            voice_activity.clear()
         except: pass
 
 @tasks.loop(minutes=1)
@@ -100,14 +99,12 @@ async def check_voice_activity():
                 
             time_in_channel = current_time - voice_time_tracker[member_key]
             
-            # Попередження через 10 хвилин
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
                     await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
                     warning_sent.add(member_key)
                 except: pass
             
-            # Відключення через 15 хвилин
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None)
@@ -117,7 +114,6 @@ async def check_voice_activity():
                     warning_sent.discard(member_key)
                 except: pass
 
-# Події
 @bot.event
 async def on_voice_state_update(member, before, after):
     if before.channel and before.channel.id in [data["voice_channel"] for data in tracked_channels.values()]:
@@ -125,6 +121,19 @@ async def on_voice_state_update(member, before, after):
         if member_key in voice_time_tracker:
             del voice_time_tracker[member_key]
             warning_sent.discard(member_key)
+
+@bot.event
+async def on_member_join(member):
+    try:
+        invites = await member.guild.invites()
+        for invite in invites:
+            if invite_roles.get(member.guild.id, {}).get(invite.code):
+                role = member.guild.get_role(invite_roles[member.guild.id][invite.code])
+                if role:
+                    await member.add_roles(role)
+                    print(f"Надано роль {role.name} через запрошення {invite.code}")
+    except Exception as e:
+        print(f"Помилка при наданні ролі: {e}")
 
 @bot.event
 async def on_ready():
@@ -142,11 +151,38 @@ async def on_ready():
 
 # ========== КОМАНДИ ==========
 
+@bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
+@app_commands.describe(
+    invite="Код запрошення (без discord.gg/)",
+    role="Роль для надання"
+)
+async def assign_role_to_invite(interaction: discord.Interaction, invite: str, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    
+    try:
+        invites = await interaction.guild.invites()
+        if not any(i.code == invite for i in invites):
+            await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
+            return
+        
+        if interaction.guild.id not in invite_roles:
+            invite_roles[interaction.guild.id] = {}
+        
+        invite_roles[interaction.guild.id][invite] = role.id
+        await interaction.response.send_message(
+            f"✅ Користувачі з запрошення {invite} отримуватимуть роль {role.mention}",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
 @app_commands.describe(
     voice_channel="Голосовий канал для відстеження",
-    log_channel="Канал для повідомлень про відключення",
-    delete_after="Через скільки хвилин видаляти повідомлення (0 - не видаляти)"
+    log_channel="Канал для повідомлень",
+    delete_after="Через скільки хвилин видаляти повідомлення"
 )
 async def track_voice(interaction: discord.Interaction, 
                      voice_channel: discord.VoiceChannel, 
@@ -165,15 +201,14 @@ async def track_voice(interaction: discord.Interaction,
     await interaction.response.send_message(
         f"🔊 Відстежування {voice_channel.mention} активовано\n"
         f"📝 Логування у {log_channel.mention}\n"
-        f"⏳ Автовидалення через {delete_after} хв\n"
-        "🔔 Попередження через 10 хв, відключення через 15 хв",
+        f"⏳ Автовидалення через {delete_after} хв",
         ephemeral=True
     )
 
-@bot.tree.command(name="voice_stats", description="Автоматична статистика активності у голосових каналах")
+@bot.tree.command(name="voice_stats", description="Автоматична статистика активності")
 @app_commands.describe(
     channel="Канал для статистики",
-    count="Кількість користувачів у топі (1-25)",
+    count="Кількість користувачів у топі",
     enable="Увімкнути/вимкнути"
 )
 async def voice_stats(interaction: discord.Interaction,
@@ -192,9 +227,7 @@ async def voice_stats(interaction: discord.Interaction,
         if not send_voice_activity_stats.is_running():
             send_voice_activity_stats.start()
         await interaction.response.send_message(
-            f"📊 Статистика увімкнена для {channel.mention}\n"
-            f"👥 Топ {count} користувачів\n"
-            f"⏱ Оновлення кожні 12 годин",
+            f"📊 Статистика увімкнена для {channel.mention}",
             ephemeral=True
         )
     else:
@@ -280,7 +313,6 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-# Запуск бота
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     raise ValueError("Відсутній токен")
