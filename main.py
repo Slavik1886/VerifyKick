@@ -58,8 +58,8 @@ async def check_voice_activity():
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
                     await member.send(
-                        "⚠️ Ви знаходитесь у голосовому каналі більше 10 хвилин. "
-                        "Будьте активні або вийдіть, інакше ви будете автоматично відключені."
+                        "⚠️ Ви знаходитесь на каналі для неактивних учасників більше 10 хвилин. "
+                        "✅Будьте активні або вийдіть, інакше ви будете автоматично відключені."
                     )
                     warning_sent.add(member_key)
                 except Exception as e:
