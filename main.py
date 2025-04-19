@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta
 import asyncio
 from collections import defaultdict
+import json
 
 intents = discord.Intents.default()
 intents.members = True
@@ -22,6 +23,21 @@ voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
 active_stats_tracking = {}
 invite_roles = {}  # {guild_id: {invite_code: role_id}}
+
+# Функції для збереження даних про запрошення
+def load_invite_roles():
+    try:
+        with open('invite_roles.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_invite_roles():
+    with open('invite_roles.json', 'w') as f:
+        json.dump(invite_roles, f)
+
+# Завантажуємо дані при старті
+invite_roles = load_invite_roles()
 
 async def delete_after(message, minutes):
     if minutes <= 0: return
@@ -125,13 +141,22 @@ async def on_voice_state_update(member, before, after):
 @bot.event
 async def on_member_join(member):
     try:
-        invites = await member.guild.invites()
-        for invite in invites:
-            if invite_roles.get(member.guild.id, {}).get(invite.code):
-                role = member.guild.get_role(invite_roles[member.guild.id][invite.code])
-                if role:
-                    await member.add_roles(role)
-                    print(f"Надано роль {role.name} через запрошення {invite.code}")
+        invites_before = {invite.code: invite.uses for invite in await member.guild.invites()}
+        await asyncio.sleep(5)  # Чекаємо оновлення статистики
+        
+        invites_after = {invite.code: invite.uses for invite in await member.guild.invites()}
+        
+        for code, uses_before in invites_before.items():
+            uses_after = invites_after.get(code, 0)
+            if uses_after > uses_before:
+                guild_id = str(member.guild.id)
+                if guild_id in invite_roles and code in invite_roles[guild_id]:
+                    role_id = invite_roles[guild_id][code]
+                    role = member.guild.get_role(role_id)
+                    if role:
+                        await member.add_roles(role)
+                        print(f"Надано роль {role.name} через запрошення {code}")
+                break
     except Exception as e:
         print(f"Помилка при наданні ролі: {e}")
 
@@ -167,10 +192,13 @@ async def assign_role_to_invite(interaction: discord.Interaction, invite: str, r
             await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
             return
         
-        if interaction.guild.id not in invite_roles:
-            invite_roles[interaction.guild.id] = {}
+        guild_id = str(interaction.guild.id)
+        if guild_id not in invite_roles:
+            invite_roles[guild_id] = {}
         
-        invite_roles[interaction.guild.id][invite] = role.id
+        invite_roles[guild_id][invite] = role.id
+        save_invite_roles()  # Зберігаємо зміни
+        
         await interaction.response.send_message(
             f"✅ Користувачі з запрошення {invite} отримуватимуть роль {role.mention}",
             ephemeral=True
