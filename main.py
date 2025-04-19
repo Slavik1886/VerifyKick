@@ -3,10 +3,6 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import os
 from datetime import datetime, timedelta
-from dotenv import load_dotenv  # Додаємо для роботи з .env файлом
-
-# Завантажуємо змінні середовища
-load_dotenv()
 
 # Налаштування інтентів
 intents = discord.Intents.default()
@@ -177,5 +173,9 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-# Запуск бота з використанням змінної середовища
-bot.run(os.getenv('DISCORD_TOKEN'))
+# Отримуємо токен з змінних середовища
+TOKEN = os.getenv('DISCORD_TOKEN')
+if not TOKEN:
+    raise ValueError("Не знайдено змінну середовища DISCORD_TOKEN")
+
+bot.run(TOKEN)
