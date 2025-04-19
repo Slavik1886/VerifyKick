@@ -8,7 +8,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
 intents.message_content = True
-intents.voice_states = True  # Додаємо відстеження голосових каналів
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -46,13 +46,13 @@ async def check_voice_activity():
                 voice_time_tracker[member.id] = current_time
             else:
                 time_in_channel = current_time - voice_time_tracker[member.id]
-                if time_in_channel > timedelta(minutes=30):  # Ліміт 30 хвилин
+                if time_in_channel > timedelta(minutes=30):
                     try:
                         await member.send(
                             f"🔔 Ви знаходитесь у голосовому каналі {channel.name} вже більше 30 хвилин. "
                             "Будь ласка, зробіть перерву, щоб не перевантажувати сервер."
                         )
-                        voice_time_tracker[member.id] = current_time  # Скидаємо таймер
+                        voice_time_tracker[member.id] = current_time
                     except Exception as e:
                         print(f"Не вдалося надіслати повідомлення {member}: {e}")
 
@@ -62,7 +62,6 @@ async def on_voice_state_update(member, before, after):
         if member.id in voice_time_tracker:
             del voice_time_tracker[member.id]
 
-### Нова команда для відстеження голосових каналів ###
 @bot.tree.command(name="track_voice", description="Відстежувати перебування у голосовому каналі")
 @app_commands.describe(channel="Голосовий канал для відстеження")
 async def track_voice(interaction: discord.Interaction, channel: discord.VoiceChannel):
@@ -77,23 +76,100 @@ async def track_voice(interaction: discord.Interaction, channel: discord.VoiceCh
         ephemeral=True
     )
 
-### Існуючі команди (без змін) ###
 @bot.tree.command(name="remove_default_only", description="Видаляє користувачів, які мають тільки роль @everyone")
 async def remove_default_only(interaction: discord.Interaction):
-    # ... (ваш існуючий код) ...
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Ця команда доступна тільки адміністраторам.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    guild = interaction.guild
+    deleted_count = 0
+    
+    for member in guild.members:
+        if not member.bot and len(member.roles) == 1:
+            try:
+                await member.kick(reason="Має тільки роль @everyone")
+                deleted_count += 1
+            except Exception as e:
+                print(f"Не вдалося видалити {member}: {e}")
+    
+    await interaction.followup.send(f"Видалено {deleted_count} користувачів, які мали тільки роль @everyone.", ephemeral=True)
 
 @bot.tree.command(name="remove_by_role", description="Видаляє всіх користувачів з обраною роллю")
 @app_commands.describe(role="Роль для видалення")
 async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
-    # ... (ваш існуючий код) ...
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Ця команда доступна тільки адміністраторам.", ephemeral=True)
+        return
+    
+    if role == interaction.guild.default_role:
+        await interaction.response.send_message("Не можна видаляти всіх користувачів сервера.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    deleted_count = 0
+    
+    for member in role.members:
+        if not member.bot:
+            try:
+                await member.kick(reason=f"Видалення користувачів ролі {role.name}")
+                deleted_count += 1
+            except Exception as e:
+                print(f"Не вдалося видалити {member}: {e}")
+    
+    await interaction.followup.send(f"Видалено {deleted_count} користувачів з роллю {role.name}.", ephemeral=True)
 
-@bot.tree.command(name="list_no_roles", description="Виводить список користувачів без ролей (крім @everyone)")
+@bot.tree.command(name="list_no_roles", description="Виводить список користувачів без жодних ролей (крім @everyone)")
 async def list_no_roles(interaction: discord.Interaction):
-    # ... (ваш існуючий код) ...
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Ця команда доступна тільки адміністраторам.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    members_without_roles = []
+    
+    for member in interaction.guild.members:
+        if not member.bot and len(member.roles) == 1:
+            members_without_roles.append(f"{member.display_name} ({member.id})")
+    
+    if not members_without_roles:
+        await interaction.followup.send("На сервері немає користувачів без ролей.", ephemeral=True)
+        return
+    
+    chunks = [members_without_roles[i:i + 20] for i in range(0, len(members_without_roles), 20)]
+    
+    for i, chunk in enumerate(chunks):
+        message = f"Користувачі без ролей (частина {i+1}):\n" + "\n".join(chunk)
+        if i == 0:
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.followup.send(message, ephemeral=True)
 
 @bot.tree.command(name="show_role_users", description="Показує список користувачів з обраною роллю")
 @app_commands.describe(role="Роль для перегляду")
 async def show_role_users(interaction: discord.Interaction, role: discord.Role):
-    # ... (ваш існуючий код) ...
+    await interaction.response.defer(ephemeral=True)
+    
+    members = [f"{member.mention} ({member.display_name})" 
+               for member in role.members 
+               if not member.bot]
+    
+    if not members:
+        await interaction.followup.send(f"🔍 Немає користувачів з роллю **{role.name}**.", ephemeral=True)
+        return
+    
+    chunk_size = 15
+    for i in range(0, len(members), chunk_size):
+        chunk = members[i:i + chunk_size]
+        embed = discord.Embed(
+            title=f"👥 Користувачі з роллю {role.name} ({len(members)} всього)",
+            description="\n".join(chunk),
+            color=role.color
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
