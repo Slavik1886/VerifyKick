@@ -84,7 +84,7 @@ async def send_voice_activity_stats():
         if not sorted_users: continue
             
         embed = discord.Embed(
-            title=f"🏆 Топ-{data['count']} активних у голосових каналах",
+            title=f"🏆 Топ-{data['count']} активних користувачів у голосових каналах",
             color=discord.Color.blurple(),
             timestamp=datetime.utcnow()
         )
@@ -130,7 +130,7 @@ async def check_voice_activity():
             
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
-                    await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
+                    await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин.✅ Будьте активні, або вас буде відєднано!")
                     warning_sent.add(member_key)
                 except: pass
             
@@ -230,7 +230,7 @@ async def on_ready():
 async def assign_role_to_invite(interaction: discord.Interaction, invite: str, role: discord.Role):
     """Команда для прив'язки ролі до запрошення"""
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+        return await interaction.response.send_message("❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
     
     try:
         # Перевіряємо чи існує таке запрошення
@@ -270,7 +270,7 @@ async def track_voice(interaction: discord.Interaction,
                      log_channel: discord.TextChannel,
                      delete_after: int = 5):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        await interaction.response.send_message(" ❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
         return
     
     tracked_channels[interaction.guild_id] = {
@@ -297,7 +297,7 @@ async def voice_stats(interaction: discord.Interaction,
                     count: app_commands.Range[int, 1, 25] = 10,
                     enable: bool = True):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        await interaction.response.send_message("❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
         return
     
     if enable:
@@ -318,7 +318,7 @@ async def voice_stats(interaction: discord.Interaction,
 @bot.tree.command(name="remove_default_only", description="Видаляє користувачів тільки з @everyone")
 async def remove_default_only(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        await interaction.response.send_message("❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
         return
     
     await interaction.response.defer(ephemeral=True)
@@ -337,7 +337,7 @@ async def remove_default_only(interaction: discord.Interaction):
 @app_commands.describe(role="Роль для видалення")
 async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        await interaction.response.send_message("❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
         return
     
     if role == interaction.guild.default_role:
@@ -359,7 +359,7 @@ async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
 @bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
 async def list_no_roles(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        await interaction.response.send_message("❌ В доступі відмовлено. Комнда доступна тільки адміністраторові", ephemeral=True)
         return
     
     await interaction.response.defer(ephemeral=True)
