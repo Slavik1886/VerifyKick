@@ -23,8 +23,10 @@ warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
 active_stats_tracking = {}
-invite_roles = {}
-invite_cache = {}
+
+# Система ролей за запрошеннями
+invite_roles = {}  # {guild_id: {invite_code: role_id}}
+invite_cache = {}  # {guild_id: {invite_code: uses}}
 
 def load_invite_data():
     try:
@@ -37,9 +39,11 @@ def save_invite_data():
     with open('invite_roles.json', 'w') as f:
         json.dump(invite_roles, f)
 
+# Завантажуємо дані при старті
 invite_roles = load_invite_data()
 
 async def update_invite_cache(guild):
+    """Оновлюємо кеш запрошень для сервера"""
     try:
         invites = await guild.invites()
         invite_cache[guild.id] = {invite.code: invite.uses for invite in invites}
@@ -149,12 +153,16 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
+    """Обробка нового учасника сервера"""
     if member.bot:
         return
     
     guild = member.guild
     try:
+        # Отримуємо поточні запрошення
         current_invites = await guild.invites()
+        
+        # Шукаємо запрошення, кількість використань якого збільшилась
         used_invite = None
         for invite in current_invites:
             cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
@@ -163,7 +171,10 @@ async def on_member_join(member):
                 break
         
         if used_invite:
+            # Оновлюємо кеш
             await update_invite_cache(guild)
+            
+            # Перевіряємо чи є роль для цього запрошення
             guild_roles = invite_roles.get(str(guild.id), {})
             role_id = guild_roles.get(used_invite.code)
             
@@ -182,15 +193,19 @@ async def on_member_join(member):
 
 @bot.event
 async def on_invite_create(invite):
+    """Оновлюємо кеш при створенні нового запрошення"""
     await update_invite_cache(invite.guild)
 
 @bot.event
 async def on_invite_delete(invite):
+    """Оновлюємо кеш при видаленні запрошення"""
     await update_invite_cache(invite.guild)
 
 @bot.event
 async def on_ready():
     print(f'Бот {bot.user} онлайн!')
+    
+    # Ініціалізуємо кеш запрошень для всіх серверів
     for guild in bot.guilds:
         await update_invite_cache(guild)
     
@@ -206,6 +221,65 @@ async def on_ready():
         send_voice_activity_stats.start()
 
 # ========== КОМАНДИ ==========
+
+@bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
+@app_commands.describe(
+    channel="Текстовий канал для надсилання",
+    title="Заголовок повідомлення",
+    description="Основний текст повідомлення",
+    color="Колір рамки (оберіть зі списку)",
+    image="Зображення для прикріплення (необов'язково)"
+)
+@app_commands.choices(color=[
+    app_commands.Choice(name="🔵 Синій", value="blue"),
+    app_commands.Choice(name="🟢 Зелений", value="green"),
+    app_commands.Choice(name="🔴 Червоний", value="red"),
+    app_commands.Choice(name="🟡 Жовтий", value="yellow"),
+    app_commands.Choice(name="🟣 Фіолетовий", value="purple"),
+    app_commands.Choice(name="🟠 Помаранчевий", value="orange")
+])
+async def send_embed(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: app_commands.Choice[str],
+    image: discord.Attachment = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+    
+    # Визначаємо колір на основі вибору
+    color_map = {
+        "blue": discord.Color.blue(),
+        "green": discord.Color.green(),
+        "red": discord.Color.red(),
+        "yellow": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange()
+    }
+    selected_color = color_map.get(color.value, discord.Color.blue())
+    
+    # Створюємо embed
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=selected_color,
+        timestamp=datetime.utcnow()
+    )
+    
+    # Додаємо зображення якщо воно є
+    if image and image.content_type.startswith('image/'):
+        embed.set_image(url=image.url)
+    
+    # Відправляємо повідомлення
+    try:
+        await channel.send(embed=embed)
+        await interaction.response.send_message(f"✅ Повідомлення успішно надіслано до {channel.mention}", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Бот не має прав для надсилання повідомлень у цей канал", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Сталася помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
 @app_commands.describe(
@@ -343,8 +417,6 @@ async def list_no_roles(interaction: discord.Interaction):
         return
     
     await interaction.response.defer(ephemeral=True)
-    
-    # Виправлено: використовуємо m.roles замість member.roles
     members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
                if not m.bot and len(m.roles) == 1]
     
