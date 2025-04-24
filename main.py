@@ -434,11 +434,7 @@ async def send_embed(
     
     # Додаємо основне зображення
     if image and image.content_type.startswith('image/'):
-        embed.set_image(url=image.url)
-    
-    # Додаємо футер
-    embed.set_footer(text=f"Відправлено {interaction.user.display_name}", 
-                    icon_url=interaction.user.display_avatar.url)
+        embed.set_image(url=image.url)     
     
     # Відправляємо
     try:
