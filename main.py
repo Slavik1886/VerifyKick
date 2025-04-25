@@ -19,7 +19,7 @@ intents.invites = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Налаштування Wargaming API
-WG_API_KEY = "ВАШ_API_КЛЮЧ"  # Замініть на ваш ключ з developers.wargaming.net
+WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Замініть на ваш ключ з developers.wargaming.net
 CLAN_TAG = "UADRG"
 REGION = "eu"
 
@@ -167,13 +167,13 @@ async def check_voice_activity():
             time_in_channel = current_time - voice_time_tracker[member_key]
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
-                    await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
+                    await member.send("⚠️ Ви в каналі для неактивних користувачів вже 10+ хвилин. ✅Будьте активні, або Ви будете автоматично відєднані!")
                     warning_sent.add(member_key)
                 except: pass
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None)
-                    msg = await log_channel.send(f"🔴 {member.mention} відключено за неактивність")
+                    msg = await log_channel.send(f"🔴 {member.mention} відєднано за неактивність на сервері")
                     bot.loop.create_task(delete_after(msg, data["delete_after"]))
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
@@ -253,7 +253,7 @@ async def generate_wot_report(date=None):
             
             embed.add_field(name="⚔️ Бої", value=f"{battles:,}", inline=True)
             embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="💎 Ресурси", value=f"{resources:,}", inline=True)
+            embed.add_field(name="💎 Промресурс", value=f"{resources:,}", inline=True)
             
             if 'emblems' in clan_info and 'x64' in clan_info['emblems']:
                 embed.set_thumbnail(url=clan_info['emblems']['x64']['wot'])
