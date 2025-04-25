@@ -20,7 +20,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Налаштування Wargaming API
 WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Замініть на ваш ключ з developers.wargaming.net
-CLAN_TAG = "uadrg"
+CLAN_TAG = "UADRG"
 REGION = "eu"
 
 # Системи відстеження
@@ -62,50 +62,50 @@ async def delete_after(message, minutes):
     try: await message.delete()
     except: pass
 
-async def get_clan_id(session, clan_tag):
-    """Отримує ID клану за тегом"""
-    url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
-    params = {
-        'application_id': WG_API_KEY,
-        'search': clan_tag,
-        'fields': 'clan_id,tag,name,members_count,emblems'
-    }
-    
-    async with session.get(url, params=params) as response:
-        data = await response.json()
-        if data['status'] == 'ok' and data['data']:
-            return data['data'][0]['clan_id']
-    return None
-
-async def get_clan_stats(session, clan_tag, date=None):
-    """Отримує статистику клану з можливістю фільтрації по даті"""
+async def get_clan_stats(session, clan_tag):
+    """Отримує статистику клану за його тегом"""
     try:
-        clan_id = await get_clan_id(session, clan_tag)
-        if not clan_id:
-            raise Exception(f"Клан {clan_tag} не знайдений")
+        # Отримуємо інформацію про клан
+        clan_info_url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
+        clan_info_params = {
+            'application_id': WG_API_KEY,
+            'search': clan_tag,
+            'fields': 'clan_id,tag,name,members_count,emblems'
+        }
         
-        params = {
+        async with session.get(clan_info_url, params=clan_info_params) as response:
+            clan_data = await response.json()
+            if clan_data['status'] != 'ok' or not clan_data['data']:
+                raise Exception(f"Клан з тегом {clan_tag} не знайдений")
+            
+            clan_info = clan_data['data'][0]
+            clan_id = clan_info['clan_id']
+        
+        # Отримуємо статистику укріпрайону
+        stats_url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanstats/"
+        stats_params = {
             'application_id': WG_API_KEY,
             'clan_id': clan_id,
             'fields': 'total_resources_earned,total_battles,total_wins'
         }
         
-        if date:
-            params['date'] = date.strftime("%Y%m%d")  # Формат YYYYMMDD
-        
-        url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanstats/"
-        async with session.get(url, params=params) as response:
-            data = await response.json()
-            if data['status'] != 'ok':
-                raise Exception("Не вдалося отримати статистику")
+        async with session.get(stats_url, params=stats_params) as response:
+            stats_data = await response.json()
+            if stats_data['status'] != 'ok':
+                raise Exception("Не вдалося отримати статистику укріпрайону")
             
             return {
                 'clan_id': clan_id,
-                'stats': data['data'].get(str(clan_id), {})
+                'clan_name': clan_info['name'],
+                'tag': clan_info['tag'],
+                'members': clan_info['members_count'],
+                'emblem': clan_info['emblems']['x64']['wot'],
+                'stats': stats_data['data'][str(clan_id)]
             }
             
     except Exception as e:
-        raise Exception(f"API помилка: {str(e)}")
+        print(f"Помилка отримання статистики: {e}")
+        raise
 
 @tasks.loop(minutes=1)
 async def update_voice_activity():
@@ -179,90 +179,51 @@ async def check_voice_activity():
                     warning_sent.discard(member_key)
                 except: pass
 
-@tasks.loop(minutes=30)
-async def send_scheduled_reports():
+@tasks.loop(minutes=1)
+async def check_report_time():
     now = datetime.now()
     current_time = now.time()
-    
-    for guild_id, config in report_channels.items():
-        if current_time.hour == config['time'].hour and current_time.minute == config['time'].minute:
-            try:
-                guild = bot.get_guild(guild_id)
-                channel = guild.get_channel(config['channel_id'])
-                
-                if channel:
-                    date = None
-                    if 'specific_date' in config and config['specific_date']:
-                        try:
-                            date = datetime.strptime(config['specific_date'], "%d.%m.%Y").date()
-                        except ValueError:
-                            print(f"Невірний формат дати у конфігурації для guild {guild_id}")
-                    
-                    report = await generate_wot_report(date)
+    for guild_id, data in report_channels.items():
+        if (current_time.hour == data["time"].hour and 
+            current_time.minute == data["time"].minute):
+            guild = bot.get_guild(guild_id)
+            channel = guild.get_channel(data["channel_id"])
+            if channel:
+                try:
+                    report = await generate_wot_report()
                     await channel.send(embed=report)
-                    
-            except Exception as e:
-                print(f"[REPORT ERROR] Guild {guild_id}: {str(e)}")
+                except Exception as e:
+                    print(f"Помилка генерації звіту: {e}")
 
-async def generate_wot_report(date=None):
-    """Генерує звіт з можливістю вибору дати"""
+async def generate_wot_report():
     async with aiohttp.ClientSession() as session:
         try:
-            # Отримуємо інформацію про клан
-            clan_info = await get_clan_id(session, CLAN_TAG)
-            if not clan_info:
-                raise Exception(f"Клан {CLAN_TAG} не знайдений")
+            clan_data = await get_clan_stats(session, CLAN_TAG)
             
-            # Отримуємо статистику
-            stats = await get_clan_stats(session, CLAN_TAG, date)
-            if not stats:
-                raise Exception("Не вдалося отримати статистику")
+            wins = clan_data['stats'].get('total_wins', 0)
+            battles = clan_data['stats'].get('total_battles', 1)
+            win_rate = (wins / battles) * 100
+            resources = clan_data['stats'].get('total_resources_earned', 0)
             
-            # Розрахунки
-            wins = stats['stats'].get('total_wins', 0)
-            battles = stats['stats'].get('total_battles', 1)
-            win_rate = (wins / battles) * 100 if battles > 0 else 0
-            resources = stats['stats'].get('total_resources_earned', 0)
-            
-            # Отримуємо додаткову інформацію про клан
-            clan_url = f"https://api.worldoftanks.{REGION}/wgn/clans/info/"
-            clan_params = {
-                'application_id': WG_API_KEY,
-                'clan_id': stats['clan_id'],
-                'fields': 'name,tag,emblems'
-            }
-            
-            async with session.get(clan_url, params=clan_params) as response:
-                clan_data = await response.json()
-                if clan_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати інформацію про клан")
-                
-                clan_info = clan_data['data'][str(stats['clan_id'])]
-            
-            # Створюємо звіт
             embed = discord.Embed(
-                title=f"📊 Звіт клану {clan_info['tag']}",
+                title=f"📊 Добовий звіт клану {clan_data['tag']}",
+                description=f"{clan_data['clan_name']} | Учасників: {clan_data['members']}",
                 color=discord.Color.gold(),
                 timestamp=datetime.now()
             )
             
-            if date:
-                embed.description = f"**{clan_info['name']}** | Статистика за {date.strftime('%d.%m.%Y')}"
-            else:
-                embed.description = f"**{clan_info['name']}** | Сьогоднішня статистика"
+            embed.add_field(name="⚔️ Всього боїв", value=f"{battles:,}", inline=True)
+            embed.add_field(name="🏆 Відсоток перемог", value=f"{win_rate:.1f}%", inline=True)
+            embed.add_field(name="💎 Зароблено ресурсів", value=f"{resources:,}", inline=True)
             
-            embed.add_field(name="⚔️ Бої", value=f"{battles:,}", inline=True)
-            embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="💎 Ресурси", value=f"{resources:,}", inline=True)
-            
-            if 'emblems' in clan_info and 'x64' in clan_info['emblems']:
-                embed.set_thumbnail(url=clan_info['emblems']['x64']['wot'])
+            embed.set_thumbnail(url=clan_data['emblem'])
+            embed.set_footer(text=f"Clan ID: {clan_data['clan_id']} | {datetime.now().strftime('%d.%m.%Y')}")
             
             return embed
             
         except Exception as e:
             error_embed = discord.Embed(
-                title="❌ Помилка звіту",
+                title=f"❌ Помилка звіту для {CLAN_TAG}",
                 description=str(e),
                 color=discord.Color.red()
             )
@@ -326,7 +287,7 @@ async def on_ready():
         print(f"Помилка синхронізації: {e}")
     check_voice_activity.start()
     update_voice_activity.start()
-    send_scheduled_reports.start()
+    check_report_time.start()
     if active_stats_tracking:
         send_voice_activity_stats.start()
 
@@ -546,83 +507,33 @@ async def send_embed(
 @bot.tree.command(name="setup_wot_report", description="Налаштувати автоматичні звіти WoT для клану UADRG")
 @app_commands.describe(
     channel="Канал для звітів",
-    report_time="Час надсилання (ГГ:ХХ)",
-    specific_date="Конкретна дата для звіту (ДД.ММ.РРРР, необов'язково)"
+    report_time="Час надсилання звіту (ГГ:ХХ)"
 )
 async def setup_wot_report(
     interaction: discord.Interaction,
     channel: discord.TextChannel,
-    report_time: str,
-    specific_date: str = None
+    report_time: str
 ):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Тільки адміністратори можуть налаштовувати звіти", ephemeral=True)
-    
+        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
     try:
         hour, minute = map(int, report_time.split(':'))
         report_time_obj = time(hour, minute)
-        
-        date_obj = None
-        if specific_date:
-            try:
-                date_obj = datetime.strptime(specific_date, "%d.%m.%Y").date()
-            except ValueError:
-                return await interaction.response.send_message(
-                    "❌ Невірний формат дати. Використовуйте ДД.ММ.РРРР (наприклад, 15.07.2023)",
-                    ephemeral=True
-                )
-        
         report_channels[interaction.guild_id] = {
             "channel_id": channel.id,
-            "time": report_time_obj,
-            "specific_date": specific_date
+            "time": report_time_obj
         }
-        
-        response_msg = f"✅ Звіти для {CLAN_TAG} будуть надсилатись о {report_time} у {channel.mention}"
-        if specific_date:
-            response_msg += f"\n🔹 Конкретна дата: {specific_date}"
-        
-        await interaction.response.send_message(response_msg, ephemeral=True)
-        
+        await interaction.response.send_message(
+            f"✅ Щоденні звіти для клану {CLAN_TAG} будуть надсилатися о {report_time} у канал {channel.mention}",
+            ephemeral=True
+        )
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Невірний формат часу. Використовуйте ГГ:ХХ (наприклад, 18:30)",
+            ephemeral=True
+        )
     except Exception as e:
         await interaction.response.send_message(
-            f"❌ Помилка: {str(e)}",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="wot_report", description="Отримати звіт за конкретну дату")
-@app_commands.describe(
-    date="Дата у форматі ДД.ММ.РРРР (наприклад, 15.07.2023)",
-    channel="Канал для відправки (необов'язково)"
-)
-async def wot_report(
-    interaction: discord.Interaction,
-    date: str,
-    channel: discord.TextChannel = None
-):
-    try:
-        await interaction.response.defer(ephemeral=True)
-        
-        if not interaction.user.guild_permissions.administrator:
-            raise Exception("Тільки адміністратори можуть використовувати цю команду")
-        
-        try:
-            date_obj = datetime.strptime(date, "%d.%m.%Y").date()
-        except ValueError:
-            raise Exception("Невірний формат дати. Використовуйте ДД.ММ.РРРР")
-        
-        report = await generate_wot_report(date_obj)
-        
-        target_channel = channel or interaction.channel
-        await target_channel.send(embed=report)
-        
-        await interaction.followup.send(
-            f"✅ Звіт за {date} надіслано до {target_channel.mention}",
-            ephemeral=True
-        )
-        
-    except Exception as e:
-        await interaction.followup.send(
             f"❌ Помилка: {str(e)}",
             ephemeral=True
         )
