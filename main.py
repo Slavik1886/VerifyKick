@@ -7,6 +7,7 @@ import asyncio
 from collections import defaultdict
 import json
 import aiohttp
+import pytz
 
 # Конфігурація
 intents = discord.Intents.default()
@@ -19,7 +20,7 @@ intents.invites = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Налаштування Wargaming API
-WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Замініть на ваш ключ з developers.wargaming.net
+WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Отримайте на https://developers.wargaming.net/
 CLAN_TAG = "UADRG"
 REGION = "eu"
 
@@ -62,50 +63,31 @@ async def delete_after(message, minutes):
     try: await message.delete()
     except: pass
 
-async def get_clan_stats(session, clan_tag):
-    """Отримує статистику клану за його тегом"""
-    try:
-        # Отримуємо інформацію про клан
-        clan_info_url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
-        clan_info_params = {
-            'application_id': WG_API_KEY,
-            'search': clan_tag,
-            'fields': 'clan_id,tag,name,members_count,emblems'
-        }
-        
-        async with session.get(clan_info_url, params=clan_info_params) as response:
-            clan_data = await response.json()
-            if clan_data['status'] != 'ok' or not clan_data['data']:
-                raise Exception(f"Клан з тегом {clan_tag} не знайдений")
-            
-            clan_info = clan_data['data'][0]
-            clan_id = clan_info['clan_id']
-        
-        # Отримуємо статистику укріпрайону
-        stats_url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanstats/"
-        stats_params = {
-            'application_id': WG_API_KEY,
-            'clan_id': clan_id,
-            'fields': 'total_resources_earned,total_battles,total_wins'
-        }
-        
-        async with session.get(stats_url, params=stats_params) as response:
-            stats_data = await response.json()
-            if stats_data['status'] != 'ok':
-                raise Exception("Не вдалося отримати статистику укріпрайону")
-            
-            return {
-                'clan_id': clan_id,
-                'clan_name': clan_info['name'],
-                'tag': clan_info['tag'],
-                'members': clan_info['members_count'],
-                'emblem': clan_info['emblems']['x64']['wot'],
-                'stats': stats_data['data'][str(clan_id)]
-            }
-            
-    except Exception as e:
-        print(f"Помилка отримання статистики: {e}")
-        raise
+async def get_clan_id(session, clan_tag):
+    url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
+    params = {
+        'application_id': WG_API_KEY,
+        'search': clan_tag,
+        'fields': 'clan_id,tag'
+    }
+    async with session.get(url, params=params) as response:
+        data = await response.json()
+        if data['status'] == 'ok' and data['data']:
+            return data['data'][0]['clan_id']
+    return None
+
+async def get_clan_stats(session, clan_id):
+    url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanreserves/"
+    params = {
+        'application_id': WG_API_KEY,
+        'clan_id': clan_id,
+        'fields': 'wins,battles,global_rating'
+    }
+    async with session.get(url, params=params) as response:
+        data = await response.json()
+        if data['status'] == 'ok':
+            return data['data']
+    return None
 
 @tasks.loop(minutes=1)
 async def update_voice_activity():
@@ -181,7 +163,7 @@ async def check_voice_activity():
 
 @tasks.loop(minutes=1)
 async def check_report_time():
-    now = datetime.now()
+    now = datetime.now(pytz.timezone('Europe/Kiev'))
     current_time = now.time()
     for guild_id, data in report_channels.items():
         if (current_time.hour == data["time"].hour and 
@@ -198,32 +180,29 @@ async def check_report_time():
 async def generate_wot_report():
     async with aiohttp.ClientSession() as session:
         try:
-            clan_data = await get_clan_stats(session, CLAN_TAG)
-            
-            wins = clan_data['stats'].get('total_wins', 0)
-            battles = clan_data['stats'].get('total_battles', 1)
+            clan_id = await get_clan_id(session, CLAN_TAG)
+            if not clan_id:
+                raise Exception("Не вдалося знайти ID клану UADRG")
+            stats = await get_clan_stats(session, clan_id)
+            if not stats:
+                raise Exception("Не вдалося отримати статистику клану")
+            wins = stats.get('wins', 0)
+            battles = stats.get('battles', 1)
             win_rate = (wins / battles) * 100
-            resources = clan_data['stats'].get('total_resources_earned', 0)
-            
+            resources = stats.get('global_rating', 0)
             embed = discord.Embed(
-                title=f"📊 Добовий звіт клану {clan_data['tag']}",
-                description=f"{clan_data['clan_name']} | Учасників: {clan_data['members']}",
-                color=discord.Color.gold(),
-                timestamp=datetime.now()
+                title=f"📊 Добовий звіт клану {CLAN_TAG}",
+                color=discord.Color.dark_green(),
+                description=f"Статистика за {datetime.now().strftime('%d.%m.%Y')}"
             )
-            
-            embed.add_field(name="⚔️ Всього боїв", value=f"{battles:,}", inline=True)
-            embed.add_field(name="🏆 Відсоток перемог", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="💎 Зароблено ресурсів", value=f"{resources:,}", inline=True)
-            
-            embed.set_thumbnail(url=clan_data['emblem'])
-            embed.set_footer(text=f"Clan ID: {clan_data['clan_id']} | {datetime.now().strftime('%d.%m.%Y')}")
-            
+            embed.add_field(name="⚔️ Бої", value=str(battles), inline=True)
+            embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
+            embed.add_field(name="💎 Ресурси", value=f"{resources:,}", inline=True)
+            embed.set_thumbnail(url="https://i.imgur.com/JQ6wF3N.png")
             return embed
-            
         except Exception as e:
             error_embed = discord.Embed(
-                title=f"❌ Помилка звіту для {CLAN_TAG}",
+                title="❌ Помилка звіту",
                 description=str(e),
                 color=discord.Color.red()
             )
@@ -507,7 +486,7 @@ async def send_embed(
 @bot.tree.command(name="setup_wot_report", description="Налаштувати автоматичні звіти WoT для клану UADRG")
 @app_commands.describe(
     channel="Канал для звітів",
-    report_time="Час надсилання звіту (ГГ:ХХ)"
+    report_time="Час надсилання звіту (ГГ:ХХ у київському часі)"
 )
 async def setup_wot_report(
     interaction: discord.Interaction,
