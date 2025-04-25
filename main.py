@@ -20,7 +20,7 @@ intents.invites = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Налаштування Wargaming API
-WG_API_KEY = "ВАШ_API_КЛЮЧ"  # Отримайте на https://developers.wargaming.net/
+WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Отримайте на https://developers.wargaming.net/
 CLAN_TAG = "UADRG"
 REGION = "eu"
 
