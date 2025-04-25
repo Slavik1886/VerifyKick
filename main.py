@@ -34,7 +34,6 @@ active_stats_tracking = {}
 invite_roles = {}
 invite_cache = {}
 report_channels = {}
-tank_cache = {}  # Cache for tank names to reduce API calls
 
 def load_invite_data():
     try:
@@ -59,13 +58,10 @@ async def update_invite_cache(guild):
         print(f"Помилка оновлення кешу запрошень: {e}")
 
 async def delete_after(message, minutes):
-    if minutes <= 0:
-        return
+    if minutes <= 0: return
     await asyncio.sleep(minutes * 60)
-    try:
-        await message.delete()
-    except:
-        pass
+    try: await message.delete()
+    except: pass
 
 async def get_clan_id(session, clan_tag):
     url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
@@ -80,26 +76,18 @@ async def get_clan_id(session, clan_tag):
             return data['data'][0]['clan_id']
     return None
 
-async def get_tank_name(session, tank_id):
-    """Fetch tank name from encyclopedia, using cache to reduce API calls."""
-    if tank_id in tank_cache:
-        return tank_cache[tank_id]
-    url = f"https://api.worldoftanks.{REGION}/wot/encyclopedia/vehicles/"
+async def get_clan_stats(session, clan_id):
+    url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanreserves/"
     params = {
         'application_id': WG_API_KEY,
-        'tank_id': tank_id,
-        'fields': 'name'
+        'clan_id': clan_id,
+        'fields': 'wins,battles,global_rating'
     }
-    try:
-        async with session.get(url, params=params) as response:
-            data = await response.json()
-            if data['status'] == 'ok' and data['data'][str(tank_id)]:
-                tank_name = data['data'][str(tank_id)]['name']
-                tank_cache[tank_id] = tank_name
-                return tank_name
-    except Exception as e:
-        print(f"Помилка отримання назви танка {tank_id}: {e}")
-    return f"Танк ID {tank_id}"
+    async with session.get(url, params=params) as response:
+        data = await response.json()
+        if data['status'] == 'ok':
+            return data['data']
+    return None
 
 @tasks.loop(minutes=1)
 async def update_voice_activity():
@@ -117,14 +105,11 @@ async def update_voice_activity():
 async def send_voice_activity_stats():
     for guild_id, data in active_stats_tracking.items():
         guild = bot.get_guild(guild_id)
-        if not guild:
-            continue
+        if not guild: continue
         channel = guild.get_channel(data["channel_id"])
-        if not channel:
-            continue
+        if not channel: continue
         sorted_users = sorted(voice_activity.items(), key=lambda x: x[1], reverse=True)[:data["count"]]
-        if not sorted_users:
-            continue
+        if not sorted_users: continue
         embed = discord.Embed(
             title=f"🏆 Топ-{data['count']} активних у голосових каналах",
             color=discord.Color.blurple(),
@@ -140,26 +125,22 @@ async def send_voice_activity_stats():
                     value=f"{int(hours)} год. {int(minutes)} хв.",
                     inline=False
                 )
-        try:
+        try: 
             await channel.send(embed=embed)
             voice_activity.clear()
-        except:
-            pass
+        except: pass
 
 @tasks.loop(minutes=1)
 async def check_voice_activity():
     current_time = datetime.utcnow()
     for guild_id, data in tracked_channels.items():
         guild = bot.get_guild(guild_id)
-        if not guild:
-            continue
+        if not guild: continue
         voice_channel = guild.get_channel(data["voice_channel"])
         log_channel = guild.get_channel(data["log_channel"])
-        if not voice_channel or not log_channel:
-            continue
+        if not voice_channel or not log_channel: continue
         for member in voice_channel.members:
-            if member.bot:
-                continue
+            if member.bot: continue
             member_key = f"{guild_id}_{member.id}"
             if member_key not in voice_time_tracker:
                 voice_time_tracker[member_key] = current_time
@@ -170,8 +151,7 @@ async def check_voice_activity():
                 try:
                     await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
                     warning_sent.add(member_key)
-                except:
-                    pass
+                except: pass
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None)
@@ -179,16 +159,15 @@ async def check_voice_activity():
                     bot.loop.create_task(delete_after(msg, data["delete_after"]))
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
-                except:
-                    pass
+                except: pass
 
 @tasks.loop(minutes=1)
 async def check_report_time():
     now = datetime.now(pytz.timezone('Europe/Kiev'))
     current_time = now.time()
     for guild_id, data in report_channels.items():
-        if (current_time.hour == data["time"].hour and
-                current_time.minute == data["time"].minute):
+        if (current_time.hour == data["time"].hour and 
+            current_time.minute == data["time"].minute):
             guild = bot.get_guild(guild_id)
             channel = guild.get_channel(data["channel_id"])
             if channel:
@@ -201,44 +180,16 @@ async def check_report_time():
 async def generate_wot_report():
     async with aiohttp.ClientSession() as session:
         try:
-            # Get Clan ID
             clan_id = await get_clan_id(session, CLAN_TAG)
             if not clan_id:
                 raise Exception("Не вдалося знайти ID клану UADRG")
-
-            # Get Clan Info (for battles and wins)
-            clan_info_url = f"https://api.worldoftanks.{REGION}/wgn/clans/info/"
-            params = {
-                'application_id': WG_API_KEY,
-                'clan_id': clan_id,
-                'fields': 'statistics.all.battles,statistics.all.wins'
-            }
-            async with session.get(clan_info_url, params=params) as response:
-                clan_data = await response.json()
-                if clan_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати статистику клану")
-
-            # Get Clan Ratings
-            ratings_url = f"https://api.worldoftanks.{REGION}/wot/clanratings/clans/"
-            params = {
-                'application_id': WG_API_KEY,
-                'clan_id': clan_id,
-                'fields': 'wins_ratio_avg,global_rating_avg'
-            }
-            async with session.get(ratings_url, params=params) as response:
-                ratings_data = await response.json()
-                if ratings_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати рейтинги клану")
-
-            # Process Data
-            stats = clan_data['data'][str(clan_id)]['statistics']['all'] if clan_data['data'] else {}
-            battles = stats.get('battles', 1)
+            stats = await get_clan_stats(session, clan_id)
+            if not stats:
+                raise Exception("Не вдалося отримати статистику клану")
             wins = stats.get('wins', 0)
-            win_rate = (wins / battles) * 100 if battles > 0 else 0
-            global_rating = ratings_data['data'][str(clan_id)].get('global_rating_avg', 0) if ratings_data['data'] else 0
-            wins_ratio = ratings_data['data'][str(clan_id)].get('wins_ratio_avg', 0) if ratings_data['data'] else 0
-
-            # Create Embed
+            battles = stats.get('battles', 1)
+            win_rate = (wins / battles) * 100
+            resources = stats.get('global_rating', 0)
             embed = discord.Embed(
                 title=f"📊 Добовий звіт клану {CLAN_TAG}",
                 color=discord.Color.dark_green(),
@@ -246,8 +197,7 @@ async def generate_wot_report():
             )
             embed.add_field(name="⚔️ Бої", value=str(battles), inline=True)
             embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="🌟 Середній рейтинг", value=f"{global_rating:,}", inline=True)
-            embed.add_field(name="📈 Середній % перемог", value=f"{wins_ratio:.1f}%", inline=True)
+            embed.add_field(name="💎 Ресурси", value=f"{resources:,}", inline=True)
             embed.set_thumbnail(url="https://i.imgur.com/JQ6wF3N.png")
             return embed
         except Exception as e:
@@ -353,8 +303,8 @@ async def assign_role_to_invite(interaction: discord.Interaction, invite: str, r
     log_channel="Канал для повідомлень",
     delete_after="Через скільки хвилин видаляти повідомлення"
 )
-async def track_voice(interaction: discord.Interaction,
-                     voice_channel: discord.VoiceChannel,
+async def track_voice(interaction: discord.Interaction, 
+                     voice_channel: discord.VoiceChannel, 
                      log_channel: discord.TextChannel,
                      delete_after: int = 5):
     if not interaction.user.guild_permissions.administrator:
@@ -379,9 +329,9 @@ async def track_voice(interaction: discord.Interaction,
     enable="Увімкнути/вимкнути"
 )
 async def voice_stats(interaction: discord.Interaction,
-                     channel: discord.TextChannel,
-                     count: app_commands.Range[int, 1, 25] = 10,
-                     enable: bool = True):
+                    channel: discord.TextChannel,
+                    count: app_commands.Range[int, 1, 25] = 10,
+                    enable: bool = True):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
@@ -412,8 +362,7 @@ async def remove_default_only(interaction: discord.Interaction):
             try:
                 await member.kick(reason="Тільки @everyone")
                 deleted += 1
-            except:
-                pass
+            except: pass
     await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
 
 @bot.tree.command(name="remove_by_role", description="Видаляє користувачів з роллю")
@@ -432,8 +381,7 @@ async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
             try:
                 await member.kick(reason=f"Видалення ролі {role.name}")
                 deleted += 1
-            except:
-                pass
+            except: pass
     await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
 
 @bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
@@ -442,7 +390,7 @@ async def list_no_roles(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members
+    members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
                if not m.bot and len(m.roles) == 1]
     if not members:
         await interaction.followup.send("Немає таких користувачів", ephemeral=True)
@@ -475,8 +423,8 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
     title="Заголовок повідомлення",
     description="Основний текст повідомлення (використовуйте \\n для нового рядка)",
     color="Колір рамки (оберіть зі списку)",
-    thumbnail="Зображення для колонтитулу (необов’язково)",
-    image="Зображення для прикріплення (необов’язково)"
+    thumbnail="Зображення для колонтитулу (необов'язково)",
+    image="Зображення для прикріплення (необов'язково)"
 )
 @app_commands.choices(color=[
     app_commands.Choice(name="🔵 Синій", value="blue"),
@@ -568,87 +516,6 @@ async def setup_wot_report(
             f"❌ Помилка: {str(e)}",
             ephemeral=True
         )
-
-@bot.tree.command(name="player_stats", description="Показати статистику гравця World of Tanks")
-@app_commands.describe(
-    nickname="Ігровий нікнейм гравця"
-)
-async def player_stats(interaction: discord.Interaction, nickname: str):
-    await interaction.response.defer(ephemeral=True)
-    async with aiohttp.ClientSession() as session:
-        try:
-            # Find Player ID
-            url = f"https://api.worldoftanks.{REGION}/wot/account/list/"
-            params = {
-                'application_id': WG_API_KEY,
-                'search': nickname,
-                'type': 'exact'
-            }
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                if data['status'] != 'ok' or not data['data']:
-                    return await interaction.followup.send("❌ Гравця не знайдено", ephemeral=True)
-                account_id = data['data'][0]['account_id']
-
-            # Get Player Stats
-            stats_url = f"https://api.worldoftanks.{REGION}/wot/account/info/"
-            params = {
-                'application_id': WG_API_KEY,
-                'account_id': account_id,
-                'fields': 'statistics.all.battles,statistics.all.wins,statistics.all.avg_damage_dealt,global_rating'
-            }
-            async with session.get(stats_url, params=params) as response:
-                stats_data = await response.json()
-                if stats_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати статистику гравця")
-
-            # Get Top Tank
-            tanks_url = f"https://api.worldoftanks.{REGION}/wot/tanks/stats/"
-            params = {
-                'application_id': WG_API_KEY,
-                'account_id': account_id,
-                'fields': 'all.battles,all.wins,tank_id',
-                'limit': 1,
-                'order_by': 'all.battles-desc'
-            }
-            async with session.get(tanks_url, params=params) as response:
-                tanks_data = await response.json()
-                if tanks_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати статистику танків")
-
-            # Process Data
-            stats = stats_data['data'][str(account_id)]['statistics']['all']
-            battles = stats.get('battles', 0)
-            wins = stats.get('wins', 0)
-            win_rate = (wins / battles * 100) if battles > 0 else 0
-            avg_damage = stats.get('avg_damage_dealt', 0)
-            global_rating = stats_data['data'][str(account_id)].get('global_rating', 0)
-
-            top_tank = None
-            if tanks_data['data'][str(account_id)]:
-                tank_id = tanks_data['data'][str(account_id)][0]['tank_id']
-                tank_stats = tanks_data['data'][str(account_id)][0]['all']
-                tank_battles = tank_stats.get('battles', 0)
-                tank_win_rate = (tank_stats.get('wins', 0) / tank_battles * 100) if tank_battles > 0 else 0
-                tank_name = await get_tank_name(session, tank_id)
-                top_tank = f"{tank_name} ({tank_battles} боїв, {tank_win_rate:.1f}% перемог)"
-
-            # Create Embed
-            embed = discord.Embed(
-                title=f"📈 Статистика гравця {nickname}",
-                color=discord.Color.blue(),
-                timestamp=datetime.utcnow()
-            )
-            embed.add_field(name="⚔️ Бої", value=str(battles), inline=True)
-            embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="💥 Середня шкода", value=f"{avg_damage:.0f}", inline=True)
-            embed.add_field(name="🌟 Рейтинг", value=str(global_rating), inline=True)
-            if top_tank:
-                embed.add_field(name="🚜 Топ танк", value=top_tank, inline=False)
-            embed.set_thumbnail(url="https://i.imgur.com/JQ6wF3N.png")
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
