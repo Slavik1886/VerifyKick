@@ -7,6 +7,8 @@ import asyncio
 from collections import defaultdict
 import json
 import random
+import aiohttp
+from typing import Optional
 
 intents = discord.Intents.default()
 intents.members = True
@@ -24,6 +26,12 @@ warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
 active_stats_tracking = {}
+stronghold_stats_config = {}
+
+# Налаштування Wargaming API
+WG_API_KEY = os.getenv('WG_API_KEY')  # Отримуємо з змінних оточення Railway
+WG_API_URL = "https://api.worldoftanks.eu/wot/"
+CLAN_ID = os.getenv('CLAN_ID')  # Отримуємо з змінних оточення Railway
 
 # Система ролей за запрошеннями
 invite_roles = {}  # {guild_id: {invite_code: role_id}}
@@ -41,6 +49,20 @@ def save_invite_data():
         json.dump(invite_roles, f)
 
 invite_roles = load_invite_data()
+
+async def get_wg_api_data(endpoint: str, params: dict) -> Optional[dict]:
+    """Функція для взаємодії з Wargaming API"""
+    params['application_id'] = WG_API_KEY
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(f"{WG_API_URL}{endpoint}", params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('data') if 'data' in data else data
+                print(f"Помилка API: {resp.status} - {await resp.text()}")
+        except Exception as e:
+            print(f"Помилка запиту до API: {e}")
+    return None
 
 async def update_invite_cache(guild):
     """Оновлюємо кеш запрошень для сервера"""
@@ -143,6 +165,86 @@ async def check_voice_activity():
                     warning_sent.discard(member_key)
                 except: pass
 
+@tasks.loop(minutes=1)
+async def stronghold_stats_task():
+    """Фонова задача для автоматичного надсилання статистики укріпрайону"""
+    if not WG_API_KEY or not CLAN_ID:
+        return
+        
+    now = datetime.utcnow()
+    for guild_id, config in stronghold_stats_config.items():
+        # Перевіряємо чи настав час надсилання
+        if now.hour == config["hour"] and now.minute == config["minute"]:
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                continue
+                
+            channel = guild.get_channel(config["channel_id"])
+            if not channel:
+                continue
+                
+            # Отримуємо дані про клан
+            clan_data = await get_wg_api_data("clans/info/", {
+                'clan_id': CLAN_ID,
+                'fields': "name,tag"
+            })
+            
+            if not clan_data or str(CLAN_ID) not in clan_data:
+                continue
+                
+            clan_info = clan_data[str(CLAN_ID)]
+            
+            # Отримуємо статистику укріпрайону
+            stronghold_data = await get_wg_api_data("stronghold/clanreserves/", {
+                'clan_id': CLAN_ID
+            })
+            
+            # Отримуємо статистику боїв
+            battles_data = await get_wg_api_data("stronghold/clanbattles/", {
+                'clan_id': CLAN_ID,
+                'fields': "battles,wins,resource_absorbed"
+            })
+            
+            if not battles_data:
+                continue
+                
+            # Формуємо embed зі статистикою
+            embed = discord.Embed(
+                title=f"Статистика укріпрайону [{clan_info['tag']}] {clan_info['name']}",
+                color=discord.Color.gold(),
+                timestamp=datetime.utcnow()
+            )
+            
+            embed.add_field(
+                name="Бої за сьогодні",
+                value=f"🔹 {battles_data.get('battles', 0)} боїв\n"
+                      f"🔹 {battles_data.get('wins', 0)} перемог\n"
+                      f"🔹 {battles_data.get('wins', 0)/battles_data.get('battles', 1)*100:.1f}% перемог",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Зароблено ресурсів",
+                value=f"🪙 {battles_data.get('resource_absorbed', 0)} кубів",
+                inline=False
+            )
+            
+            if stronghold_data and stronghold_data.get('active'):
+                active_reserves = "\n".join(
+                    f"🔹 {res['title']} (до {res['end_time']})"
+                    for res in stronghold_data['active']
+                )
+                embed.add_field(
+                    name="Активні резерви",
+                    value=active_reserves,
+                    inline=False
+                )
+            
+            try:
+                await channel.send(embed=embed)
+            except:
+                pass
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     if before.channel and before.channel.id in [data["voice_channel"] for data in tracked_channels.values()]:
@@ -208,6 +310,8 @@ async def on_ready():
     update_voice_activity.start()
     if active_stats_tracking:
         send_voice_activity_stats.start()
+    if stronghold_stats_config:
+        stronghold_stats_task.start()
 
 # ========== КОМАНДИ ==========
 
@@ -436,8 +540,7 @@ async def send_embed(
     if image and image.content_type.startswith('image/'):
         embed.set_image(url=image.url)
    
-    
-      # Відправляємо
+    # Відправляємо
     try:
         await channel.send(embed=embed)
         await interaction.response.send_message(
@@ -454,6 +557,110 @@ async def send_embed(
             f"❌ Сталася помилка: {str(e)}",
             ephemeral=True
         )
+
+@bot.tree.command(name="stronghold_stats", description="Налаштувати автоматичну статистику укріпрайону")
+@app_commands.describe(
+    channel="Канал для надсилання статистики",
+    hour="Година надсилання (0-23)",
+    minute="Хвилина надсилання (0-59)",
+    enable="Увімкнути/вимкнути автоматичне надсилання"
+)
+async def stronghold_stats(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    hour: app_commands.Range[int, 0, 23] = 18,
+    minute: app_commands.Range[int, 0, 59] = 0,
+    enable: bool = True
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+    
+    if not WG_API_KEY or not CLAN_ID:
+        return await interaction.response.send_message("❌ Не налаштовано API ключ або ID клану", ephemeral=True)
+    
+    if enable:
+        stronghold_stats_config[interaction.guild_id] = {
+            "channel_id": channel.id,
+            "hour": hour,
+            "minute": minute
+        }
+        
+        if not stronghold_stats_task.is_running():
+            stronghold_stats_task.start()
+            
+        await interaction.response.send_message(
+            f"✅ Статистика укріпрайону буде надсилатись щодня о {hour:02d}:{minute:02d} у {channel.mention}",
+            ephemeral=True
+        )
+    else:
+        stronghold_stats_config.pop(interaction.guild_id, None)
+        await interaction.response.send_message("❌ Автоматичне надсилання статистики вимкнено", ephemeral=True)
+
+@bot.tree.command(name="stronghold_now", description="Отримати поточну статистику укріпрайону")
+async def stronghold_now(interaction: discord.Interaction):
+    if not WG_API_KEY or not CLAN_ID:
+        return await interaction.response.send_message("❌ Не налаштовано API ключ або ID клану", ephemeral=True)
+    
+    await interaction.response.defer()
+    
+    # Отримуємо дані про клан
+    clan_data = await get_wg_api_data("clans/info/", {
+        'clan_id': CLAN_ID,
+        'fields': "name,tag"
+    })
+    
+    if not clan_data or str(CLAN_ID) not in clan_data:
+        return await interaction.followup.send("❌ Не вдалося отримати дані клану", ephemeral=True)
+    
+    clan_info = clan_data[str(CLAN_ID)]
+    
+    # Отримуємо статистику укріпрайону
+    stronghold_data = await get_wg_api_data("stronghold/clanreserves/", {
+        'clan_id': CLAN_ID
+    })
+    
+    # Отримуємо статистику боїв
+    battles_data = await get_wg_api_data("stronghold/clanbattles/", {
+        'clan_id': CLAN_ID,
+        'fields': "battles,wins,resource_absorbed"
+    })
+    
+    if not battles_data:
+        return await interaction.followup.send("❌ Не вдалося отримати статистику боїв", ephemeral=True)
+    
+    # Формуємо embed
+    embed = discord.Embed(
+        title=f"Поточна статистика [{clan_info['tag']}] {clan_info['name']}",
+        color=discord.Color.green(),
+        timestamp=datetime.utcnow()
+    )
+    
+    embed.add_field(
+        name="Бої за сьогодні",
+        value=f"🔹 {battles_data.get('battles', 0)} боїв\n"
+              f"🔹 {battles_data.get('wins', 0)} перемог\n"
+              f"🔹 {battles_data.get('wins', 0)/battles_data.get('battles', 1)*100:.1f}% перемог",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="Зароблено ресурсів",
+        value=f"🪙 {battles_data.get('resource_absorbed', 0)} кубів",
+        inline=False
+    )
+    
+    if stronghold_data and stronghold_data.get('active'):
+        active_reserves = "\n".join(
+            f"🔹 {res['title']} (до {res['end_time']})"
+            for res in stronghold_data['active']
+        )
+        embed.add_field(
+            name="Активні резерви",
+            value=active_reserves,
+            inline=False
+        )
+    
+    await interaction.followup.send(embed=embed)
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
