@@ -2,13 +2,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 import asyncio
 from collections import defaultdict
 import json
-import aiohttp
+import random
 
-# Конфігурація
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
@@ -18,11 +17,6 @@ intents.invites = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Налаштування Wargaming API
-WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"  # Замініть на ваш ключ з developers.wargaming.net
-CLAN_TAG = "UADRG"
-REGION = "eu"
-
 # Системи відстеження
 voice_time_tracker = {}
 tracked_channels = {}
@@ -30,9 +24,10 @@ warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
 active_stats_tracking = {}
-invite_roles = {}
-invite_cache = {}
-report_channels = {}
+
+# Система ролей за запрошеннями
+invite_roles = {}  # {guild_id: {invite_code: role_id}}
+invite_cache = {}  # {guild_id: {invite_code: uses}}
 
 def load_invite_data():
     try:
@@ -48,6 +43,7 @@ def save_invite_data():
 invite_roles = load_invite_data()
 
 async def update_invite_cache(guild):
+    """Оновлюємо кеш запрошень для сервера"""
     try:
         invites = await guild.invites()
         invite_cache[guild.id] = {invite.code: invite.uses for invite in invites}
@@ -62,57 +58,13 @@ async def delete_after(message, minutes):
     try: await message.delete()
     except: pass
 
-async def get_clan_id(session, clan_tag):
-    """Отримує ID клану за тегом"""
-    url = f"https://api.worldoftanks.{REGION}/wgn/clans/list/"
-    params = {
-        'application_id': WG_API_KEY,
-        'search': clan_tag,
-        'fields': 'clan_id,tag,name,members_count,emblems'
-    }
-    
-    async with session.get(url, params=params) as response:
-        data = await response.json()
-        if data['status'] == 'ok' and data['data']:
-            return data['data'][0]['clan_id']
-    return None
-
-async def get_clan_stats(session, clan_tag, date=None):
-    """Отримує статистику клану з можливістю фільтрації по даті"""
-    try:
-        clan_id = await get_clan_id(session, clan_tag)
-        if not clan_id:
-            raise Exception(f"Клан {clan_tag} не знайдений")
-        
-        params = {
-            'application_id': WG_API_KEY,
-            'clan_id': clan_id,
-            'fields': 'total_resources_earned,total_battles,total_wins'
-        }
-        
-        if date:
-            params['date'] = date.strftime("%Y%m%d")  # Формат YYYYMMDD
-        
-        url = f"https://api.worldoftanks.{REGION}/wot/stronghold/clanstats/"
-        async with session.get(url, params=params) as response:
-            data = await response.json()
-            if data['status'] != 'ok':
-                raise Exception("Не вдалося отримати статистику")
-            
-            return {
-                'clan_id': clan_id,
-                'stats': data['data'].get(str(clan_id), {})
-            }
-            
-    except Exception as e:
-        raise Exception(f"API помилка: {str(e)}")
-
 @tasks.loop(minutes=1)
 async def update_voice_activity():
     global last_activity_update
     now = datetime.utcnow()
     time_elapsed = now - last_activity_update
     last_activity_update = now
+    
     for guild in bot.guilds:
         for voice_channel in guild.voice_channels:
             for member in voice_channel.members:
@@ -124,15 +76,19 @@ async def send_voice_activity_stats():
     for guild_id, data in active_stats_tracking.items():
         guild = bot.get_guild(guild_id)
         if not guild: continue
+            
         channel = guild.get_channel(data["channel_id"])
         if not channel: continue
+            
         sorted_users = sorted(voice_activity.items(), key=lambda x: x[1], reverse=True)[:data["count"]]
         if not sorted_users: continue
+            
         embed = discord.Embed(
             title=f"🏆 Топ-{data['count']} активних у голосових каналах",
             color=discord.Color.blurple(),
             timestamp=datetime.utcnow()
         )
+        
         for i, (user_id, time_spent) in enumerate(sorted_users, 1):
             member = guild.get_member(user_id)
             if member:
@@ -143,6 +99,7 @@ async def send_voice_activity_stats():
                     value=f"{int(hours)} год. {int(minutes)} хв.",
                     inline=False
                 )
+        
         try: 
             await channel.send(embed=embed)
             voice_activity.clear()
@@ -154,119 +111,37 @@ async def check_voice_activity():
     for guild_id, data in tracked_channels.items():
         guild = bot.get_guild(guild_id)
         if not guild: continue
+            
         voice_channel = guild.get_channel(data["voice_channel"])
         log_channel = guild.get_channel(data["log_channel"])
         if not voice_channel or not log_channel: continue
+            
         for member in voice_channel.members:
             if member.bot: continue
+                
             member_key = f"{guild_id}_{member.id}"
+            
             if member_key not in voice_time_tracker:
                 voice_time_tracker[member_key] = current_time
                 warning_sent.discard(member_key)
                 continue
+                
             time_in_channel = current_time - voice_time_tracker[member_key]
+            
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
-                    await member.send("⚠️ Ви в каналі для неактивних користувачів вже 10+ хвилин. ✅Будьте активні, або Ви будете автоматично відєднані!")
+                    await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
                     warning_sent.add(member_key)
                 except: pass
+            
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None)
-                    msg = await log_channel.send(f"🔴 {member.mention} відєднано за неактивність на сервері")
+                    msg = await log_channel.send(f"🔴 {member.mention} відключено за неактивність")
                     bot.loop.create_task(delete_after(msg, data["delete_after"]))
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
                 except: pass
-
-@tasks.loop(minutes=30)
-async def send_scheduled_reports():
-    now = datetime.now()
-    current_time = now.time()
-    
-    for guild_id, config in report_channels.items():
-        if current_time.hour == config['time'].hour and current_time.minute == config['time'].minute:
-            try:
-                guild = bot.get_guild(guild_id)
-                channel = guild.get_channel(config['channel_id'])
-                
-                if channel:
-                    date = None
-                    if 'specific_date' in config and config['specific_date']:
-                        try:
-                            date = datetime.strptime(config['specific_date'], "%d.%m.%Y").date()
-                        except ValueError:
-                            print(f"Невірний формат дати у конфігурації для guild {guild_id}")
-                    
-                    report = await generate_wot_report(date)
-                    await channel.send(embed=report)
-                    
-            except Exception as e:
-                print(f"[REPORT ERROR] Guild {guild_id}: {str(e)}")
-
-async def generate_wot_report(date=None):
-    """Генерує звіт з можливістю вибору дати"""
-    async with aiohttp.ClientSession() as session:
-        try:
-            # Отримуємо інформацію про клан
-            clan_info = await get_clan_id(session, CLAN_TAG)
-            if not clan_info:
-                raise Exception(f"Клан {CLAN_TAG} не знайдений")
-            
-            # Отримуємо статистику
-            stats = await get_clan_stats(session, CLAN_TAG, date)
-            if not stats:
-                raise Exception("Не вдалося отримати статистику")
-            
-            # Розрахунки
-            wins = stats['stats'].get('total_wins', 0)
-            battles = stats['stats'].get('total_battles', 1)
-            win_rate = (wins / battles) * 100 if battles > 0 else 0
-            resources = stats['stats'].get('total_resources_earned', 0)
-            
-            # Отримуємо додаткову інформацію про клан
-            clan_url = f"https://api.worldoftanks.{REGION}/wgn/clans/info/"
-            clan_params = {
-                'application_id': WG_API_KEY,
-                'clan_id': stats['clan_id'],
-                'fields': 'name,tag,emblems'
-            }
-            
-            async with session.get(clan_url, params=clan_params) as response:
-                clan_data = await response.json()
-                if clan_data['status'] != 'ok':
-                    raise Exception("Не вдалося отримати інформацію про клан")
-                
-                clan_info = clan_data['data'][str(stats['clan_id'])]
-            
-            # Створюємо звіт
-            embed = discord.Embed(
-                title=f"📊 Звіт клану {clan_info['tag']}",
-                color=discord.Color.gold(),
-                timestamp=datetime.now()
-            )
-            
-            if date:
-                embed.description = f"**{clan_info['name']}** | Статистика за {date.strftime('%d.%m.%Y')}"
-            else:
-                embed.description = f"**{clan_info['name']}** | Сьогоднішня статистика"
-            
-            embed.add_field(name="⚔️ Бої", value=f"{battles:,}", inline=True)
-            embed.add_field(name="🏆 Перемоги", value=f"{win_rate:.1f}%", inline=True)
-            embed.add_field(name="💎 Промресурс", value=f"{resources:,}", inline=True)
-            
-            if 'emblems' in clan_info and 'x64' in clan_info['emblems']:
-                embed.set_thumbnail(url=clan_info['emblems']['x64']['wot'])
-            
-            return embed
-            
-        except Exception as e:
-            error_embed = discord.Embed(
-                title="❌ Помилка звіту",
-                description=str(e),
-                color=discord.Color.red()
-            )
-            return error_embed
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -280,6 +155,7 @@ async def on_voice_state_update(member, before, after):
 async def on_member_join(member):
     if member.bot:
         return
+    
     guild = member.guild
     try:
         current_invites = await guild.invites()
@@ -289,10 +165,12 @@ async def on_member_join(member):
             if invite.uses > cached_uses:
                 used_invite = invite
                 break
+        
         if used_invite:
             await update_invite_cache(guild)
             guild_roles = invite_roles.get(str(guild.id), {})
             role_id = guild_roles.get(used_invite.code)
+            
             if role_id:
                 role = guild.get_role(role_id)
                 if role:
@@ -319,14 +197,15 @@ async def on_ready():
     print(f'Бот {bot.user} онлайн!')
     for guild in bot.guilds:
         await update_invite_cache(guild)
+    
     try:
         synced = await bot.tree.sync()
         print(f"Синхронізовано {len(synced)} команд")
     except Exception as e:
         print(f"Помилка синхронізації: {e}")
+    
     check_voice_activity.start()
     update_voice_activity.start()
-    send_scheduled_reports.start()
     if active_stats_tracking:
         send_voice_activity_stats.start()
 
@@ -340,22 +219,29 @@ async def on_ready():
 async def assign_role_to_invite(interaction: discord.Interaction, invite: str, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
     try:
         invites = await interaction.guild.invites()
         if not any(inv.code == invite for inv in invites):
             return await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
+        
         guild_id = str(interaction.guild.id)
         if guild_id not in invite_roles:
             invite_roles[guild_id] = {}
+        
         invite_roles[guild_id][invite] = role.id
         save_invite_data()
         await update_invite_cache(interaction.guild)
+        
         await interaction.response.send_message(
             f"✅ Користувачі, які прийдуть через запрошення `{invite}`, отримуватимуть роль {role.mention}",
             ephemeral=True
         )
     except Exception as e:
-        await interaction.response.send_message(f"❌ Помилка: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(
+            f"❌ Помилка: {str(e)}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
 @app_commands.describe(
@@ -370,11 +256,13 @@ async def track_voice(interaction: discord.Interaction,
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
+    
     tracked_channels[interaction.guild_id] = {
         "voice_channel": voice_channel.id,
         "log_channel": log_channel.id,
         "delete_after": delete_after
     }
+    
     await interaction.response.send_message(
         f"🔊 Відстежування {voice_channel.mention} активовано\n"
         f"📝 Логування у {log_channel.mention}\n"
@@ -395,6 +283,7 @@ async def voice_stats(interaction: discord.Interaction,
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
+    
     if enable:
         active_stats_tracking[interaction.guild_id] = {
             "channel_id": channel.id,
@@ -415,14 +304,17 @@ async def remove_default_only(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
+    
     await interaction.response.defer(ephemeral=True)
     deleted = 0
+    
     for member in interaction.guild.members:
         if not member.bot and len(member.roles) == 1:
             try:
                 await member.kick(reason="Тільки @everyone")
                 deleted += 1
             except: pass
+    
     await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
 
 @bot.tree.command(name="remove_by_role", description="Видаляє користувачів з роллю")
@@ -431,17 +323,21 @@ async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
+    
     if role == interaction.guild.default_role:
         await interaction.response.send_message("Не можна видаляти всіх", ephemeral=True)
         return
+    
     await interaction.response.defer(ephemeral=True)
     deleted = 0
+    
     for member in role.members:
         if not member.bot:
             try:
                 await member.kick(reason=f"Видалення ролі {role.name}")
                 deleted += 1
             except: pass
+    
     await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
 
 @bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
@@ -449,12 +345,15 @@ async def list_no_roles(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
+    
     await interaction.response.defer(ephemeral=True)
     members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
                if not m.bot and len(m.roles) == 1]
+    
     if not members:
         await interaction.followup.send("Немає таких користувачів", ephemeral=True)
         return
+    
     chunks = [members[i:i+20] for i in range(0, len(members), 20)]
     for i, chunk in enumerate(chunks):
         msg = f"Користувачі без ролей (частина {i+1}):\n" + "\n".join(chunk)
@@ -465,9 +364,11 @@ async def list_no_roles(interaction: discord.Interaction):
 async def show_role_users(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=True)
     members = [f"{m.mention} ({m.display_name})" for m in role.members if not m.bot]
+    
     if not members:
         await interaction.followup.send(f"Немає користувачів з роллю {role.name}", ephemeral=True)
         return
+    
     chunks = [members[i:i+15] for i in range(0, len(members), 15)]
     for i, chunk in enumerate(chunks):
         embed = discord.Embed(
@@ -506,6 +407,8 @@ async def send_embed(
 ):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+    
+    # Визначаємо колір
     color_map = {
         "blue": discord.Color.blue(),
         "green": discord.Color.green(),
@@ -516,16 +419,25 @@ async def send_embed(
         "random": discord.Color.random()
     }
     selected_color = color_map.get(color.value, discord.Color.blue())
+    
+    # Створюємо embed
     embed = discord.Embed(
         title=title,
         description=description.replace('\\n', '\n'),
         color=selected_color,
         timestamp=datetime.utcnow()
     )
+    
+    # Додаємо колонтитул
     if thumbnail and thumbnail.content_type.startswith('image/'):
         embed.set_thumbnail(url=thumbnail.url)
+    
+    # Додаємо основне зображення
     if image and image.content_type.startswith('image/'):
         embed.set_image(url=image.url)
+   
+    
+      # Відправляємо
     try:
         await channel.send(embed=embed)
         await interaction.response.send_message(
@@ -540,90 +452,6 @@ async def send_embed(
     except Exception as e:
         await interaction.response.send_message(
             f"❌ Сталася помилка: {str(e)}",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="setup_wot_report", description="Налаштувати автоматичні звіти WoT для клану UADRG")
-@app_commands.describe(
-    channel="Канал для звітів",
-    report_time="Час надсилання (ГГ:ХХ)",
-    specific_date="Конкретна дата для звіту (ДД.ММ.РРРР, необов'язково)"
-)
-async def setup_wot_report(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    report_time: str,
-    specific_date: str = None
-):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Тільки адміністратори можуть налаштовувати звіти", ephemeral=True)
-    
-    try:
-        hour, minute = map(int, report_time.split(':'))
-        report_time_obj = time(hour, minute)
-        
-        date_obj = None
-        if specific_date:
-            try:
-                date_obj = datetime.strptime(specific_date, "%d.%m.%Y").date()
-            except ValueError:
-                return await interaction.response.send_message(
-                    "❌ Невірний формат дати. Використовуйте ДД.ММ.РРРР (наприклад, 15.07.2023)",
-                    ephemeral=True
-                )
-        
-        report_channels[interaction.guild_id] = {
-            "channel_id": channel.id,
-            "time": report_time_obj,
-            "specific_date": specific_date
-        }
-        
-        response_msg = f"✅ Звіти для {CLAN_TAG} будуть надсилатись о {report_time} у {channel.mention}"
-        if specific_date:
-            response_msg += f"\n🔹 Конкретна дата: {specific_date}"
-        
-        await interaction.response.send_message(response_msg, ephemeral=True)
-        
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Помилка: {str(e)}",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="wot_report", description="Отримати звіт за конкретну дату")
-@app_commands.describe(
-    date="Дата у форматі ДД.ММ.РРРР (наприклад, 15.07.2023)",
-    channel="Канал для відправки (необов'язково)"
-)
-async def wot_report(
-    interaction: discord.Interaction,
-    date: str,
-    channel: discord.TextChannel = None
-):
-    try:
-        await interaction.response.defer(ephemeral=True)
-        
-        if not interaction.user.guild_permissions.administrator:
-            raise Exception("Тільки адміністратори можуть використовувати цю команду")
-        
-        try:
-            date_obj = datetime.strptime(date, "%d.%m.%Y").date()
-        except ValueError:
-            raise Exception("Невірний формат дати. Використовуйте ДД.ММ.РРРР")
-        
-        report = await generate_wot_report(date_obj)
-        
-        target_channel = channel or interaction.channel
-        await target_channel.send(embed=report)
-        
-        await interaction.followup.send(
-            f"✅ Звіт за {date} надіслано до {target_channel.mention}",
-            ephemeral=True
-        )
-        
-    except Exception as e:
-        await interaction.followup.send(
-            f"❌ Помилка: {str(e)}",
             ephemeral=True
         )
 
