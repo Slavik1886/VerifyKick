@@ -9,6 +9,7 @@ import json
 import random
 import aiohttp
 from typing import Optional
+import pytz  # Додано для роботи з часовими поясами
 
 intents = discord.Intents.default()
 intents.members = True
@@ -167,18 +168,20 @@ async def check_voice_activity():
 
 @tasks.loop(minutes=1)
 async def stronghold_stats_task():
-    """Фонова задача для автоматичного надсилання статистики укріпрайону"""
+    """Фонова задача для автоматичного надсил��ння статистики укріпрайону"""
     if not WG_API_KEY or not CLAN_ID:
         print("Попередження: WG_API_KEY або CLAN_ID не встановлені!")
         return
         
-    now = datetime.utcnow()
-    print(f"Перевірка часу: {now.hour}:{now.minute} UTC")
+    # Встановлюємо київський час
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Перевірка часу (Київ): {now.hour}:{now.minute}")
     
     for guild_id, config in stronghold_stats_config.items():
         print(f"Перевірка конфігурації для guild_id: {guild_id}")
         
-        # Перевіряємо чи настав час надсилання
+        # Перевіряємо чи настав час надсилання (у київському часі)
         if now.hour == config["hour"] and now.minute == config["minute"]:
             print("Час співпав! Готуємо статистику...")
             
@@ -221,13 +224,13 @@ async def stronghold_stats_task():
                     continue
                     
                 # Формуємо embed зі статистикою
+                win_rate = (battles_data.get('wins', 0) / battles_data.get('battles', 1)) * 100 if battles_data.get('battles', 0) > 0 else 0
+                
                 embed = discord.Embed(
                     title=f"Статистика укріпрайону [{clan_info['tag']}] {clan_info['name']}",
                     color=discord.Color.gold(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(kyiv_tz)
                 )
-                
-                win_rate = (battles_data.get('wins', 0) / battles_data.get('battles', 1)) * 100 if battles_data.get('battles', 0) > 0 else 0
                 
                 embed.add_field(
                     name="Бої за сьогодні",
@@ -312,7 +315,11 @@ async def on_invite_delete(invite):
 @bot.event
 async def on_ready():
     print(f'Бот {bot.user} онлайн!')
-    print(f"Поточний час UTC: {datetime.utcnow()}")
+    
+    # Встановлюємо київський час для логування
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Поточний час (Київ): {now}")
     print(f"WG_API_KEY: {'встановлено' if WG_API_KEY else 'не встановлено'}")
     print(f"CLAN_ID: {'встановлено' if CLAN_ID else 'не встановлено'}")
     
@@ -581,7 +588,7 @@ async def send_embed(
 @bot.tree.command(name="stronghold_stats", description="Налаштувати автоматичну статистику укріпрайону")
 @app_commands.describe(
     channel="Канал для надсилання статистики",
-    hour="Година надсилання (0-23)",
+    hour="Година надсилання (0-23, Київський час)",
     minute="Хвилина надсилання (0-59)",
     enable="Увімкнути/вимкнути автоматичне надсилання"
 )
@@ -612,9 +619,13 @@ async def stronghold_stats(
             stronghold_stats_task.start()
             print("Фонову задачу stronghold_stats_task запущено!")
         
+        # Додаємо інформацію про київський час
+        kyiv_tz = pytz.timezone('Europe/Kiev')
+        now = datetime.now(kyiv_tz)
+        
         await interaction.response.send_message(
-            f"✅ Статистика укріпрайону буде надсилатись щодня о {hour:02d}:{minute:02d} UTC у {channel.mention}\n"
-            f"Наступна перевірка о {datetime.utcnow().hour}:{datetime.utcnow().minute} UTC",
+            f"✅ Статистика укріпрайону буде надсилатись щодня о {hour:02d}:{minute:02d} (Київський час) у {channel.mention}\n"
+            f"Поточний час у Києві: {now.hour}:{now.minute}",
             ephemeral=True
         )
         
@@ -629,6 +640,9 @@ async def stronghold_now(interaction: discord.Interaction):
         return await interaction.response.send_message("❌ Не налаштовано API ключ або ID клану", ephemeral=True)
     
     await interaction.response.defer()
+    
+    # Встановлюємо київський час
+    kyiv_tz = pytz.timezone('Europe/Kiev')
     
     # Отримуємо дані про клан
     clan_data = await get_wg_api_data("clans/info/", {
@@ -661,7 +675,7 @@ async def stronghold_now(interaction: discord.Interaction):
     embed = discord.Embed(
         title=f"Поточна статистика [{clan_info['tag']}] {clan_info['name']}",
         color=discord.Color.green(),
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(kyiv_tz)
     )
     
     embed.add_field(
@@ -697,5 +711,4 @@ if not TOKEN:
 
 if __name__ == '__main__':
     print("Запуск бота...")
-    print(f"Поточний час UTC: {datetime.utcnow()}")
     bot.run(TOKEN)
