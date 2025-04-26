@@ -153,14 +153,14 @@ async def check_voice_activity():
             
             if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
                 try:
-                    await member.send("⚠️ Ви в голосовому каналі вже 10+ хвилин. Будьте активні!")
+                    await member.send("⚠️ Ви в каналі для неактивних користувачів вже 10+ хвилин. ✅ Будьте активні, або Ви будете відєднані!")
                     warning_sent.add(member_key)
                 except: pass
             
             if time_in_channel > timedelta(minutes=15):
                 try:
                     await member.move_to(None)
-                    msg = await log_channel.send(f"🔴 {member.mention} відключено за неактивність")
+                    msg = await log_channel.send(f"🔴 {member.mention} відключено за неактивність на сервері")
                     bot.loop.create_task(delete_after(msg, data["delete_after"]))
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
