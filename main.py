@@ -9,7 +9,7 @@ import json
 import random
 import aiohttp
 from typing import Optional
-import pytz  # Додано для роботи з часовими поясами
+import pytz
 
 intents = discord.Intents.default()
 intents.members = True
@@ -26,17 +26,13 @@ tracked_channels = {}
 warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
-active_stats_tracking = {}
-stronghold_stats_config = {}
-
-# Налаштування Wargaming API
-WG_API_KEY = os.getenv('WG_API_KEY')
-WG_API_URL = "https://api.worldoftanks.eu/wot/"
-CLAN_ID = os.getenv('CLAN_ID')
 
 # Система ролей за запрошеннями
 invite_roles = {}
 invite_cache = {}
+
+# Система привітальних повідомлень
+welcome_messages = {}
 
 def load_invite_data():
     try:
@@ -49,7 +45,19 @@ def save_invite_data():
     with open('invite_roles.json', 'w') as f:
         json.dump(invite_roles, f)
 
+def load_welcome_data():
+    try:
+        with open('welcome_messages.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_welcome_data():
+    with open('welcome_messages.json', 'w') as f:
+        json.dump(welcome_messages, f)
+
 invite_roles = load_invite_data()
+welcome_messages = load_welcome_data()
 
 async def get_wg_api_data(endpoint: str, params: dict) -> Optional[dict]:
     """Функція для взаємодії з Wargaming API"""
@@ -94,40 +102,6 @@ async def update_voice_activity():
                 if not member.bot:
                     voice_activity[member.id] += time_elapsed
 
-@tasks.loop(hours=12)
-async def send_voice_activity_stats():
-    for guild_id, data in active_stats_tracking.items():
-        guild = bot.get_guild(guild_id)
-        if not guild: continue
-            
-        channel = guild.get_channel(data["channel_id"])
-        if not channel: continue
-            
-        sorted_users = sorted(voice_activity.items(), key=lambda x: x[1], reverse=True)[:data["count"]]
-        if not sorted_users: continue
-            
-        embed = discord.Embed(
-            title=f"🏆 Топ-{data['count']} активних у голосових каналах",
-            color=discord.Color.blurple(),
-            timestamp=datetime.utcnow()
-        )
-        
-        for i, (user_id, time_spent) in enumerate(sorted_users, 1):
-            member = guild.get_member(user_id)
-            if member:
-                hours, remainder = divmod(time_spent.total_seconds(), 3600)
-                minutes = remainder // 60
-                embed.add_field(
-                    name=f"{i}. {member.display_name}",
-                    value=f"{int(hours)} год. {int(minutes)} хв.",
-                    inline=False
-                )
-        
-        try: 
-            await channel.send(embed=embed)
-            voice_activity.clear()
-        except: pass
-
 @tasks.loop(minutes=1)
 async def check_voice_activity():
     current_time = datetime.utcnow()
@@ -165,103 +139,6 @@ async def check_voice_activity():
                     del voice_time_tracker[member_key]
                     warning_sent.discard(member_key)
                 except: pass
-
-@tasks.loop(minutes=1)
-async def stronghold_stats_task():
-    """Фонова задача для автоматичного надсил��ння статистики укріпрайону"""
-    if not WG_API_KEY or not CLAN_ID:
-        print("Попередження: WG_API_KEY або CLAN_ID не встановлені!")
-        return
-        
-    # Встановлюємо київський час
-    kyiv_tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(kyiv_tz)
-    print(f"Перевірка часу (Київ): {now.hour}:{now.minute}")
-    
-    for guild_id, config in stronghold_stats_config.items():
-        print(f"Перевірка конфігурації для guild_id: {guild_id}")
-        
-        # Перевіряємо чи настав час надсилання (у київському часі)
-        if now.hour == config["hour"] and now.minute == config["minute"]:
-            print("Час співпав! Готуємо статистику...")
-            
-            guild = bot.get_guild(guild_id)
-            if not guild:
-                print("Помилка: сервер не знайдено")
-                continue
-                
-            channel = guild.get_channel(config["channel_id"])
-            if not channel:
-                print("Помилка: канал не знайдено")
-                continue
-                
-            try:
-                # Отримуємо дані про клан
-                clan_data = await get_wg_api_data("clans/info/", {
-                    'clan_id': CLAN_ID,
-                    'fields': "name,tag"
-                })
-                
-                if not clan_data or str(CLAN_ID) not in clan_data:
-                    print("Помилка: не вдалося отримати дані клану")
-                    continue
-                    
-                clan_info = clan_data[str(CLAN_ID)]
-                
-                # Отримуємо статистику укріпрайону
-                stronghold_data = await get_wg_api_data("stronghold/clanreserves/", {
-                    'clan_id': CLAN_ID
-                })
-                
-                # Отримуємо статистику боїв
-                battles_data = await get_wg_api_data("stronghold/clanbattles/", {
-                    'clan_id': CLAN_ID,
-                    'fields': "battles,wins,resource_absorbed"
-                })
-                
-                if not battles_data:
-                    print("Помилка: не вдалося отримати статистику боїв")
-                    continue
-                    
-                # Формуємо embed зі статистикою
-                win_rate = (battles_data.get('wins', 0) / battles_data.get('battles', 1)) * 100 if battles_data.get('battles', 0) > 0 else 0
-                
-                embed = discord.Embed(
-                    title=f"Статистика укріпрайону [{clan_info['tag']}] {clan_info['name']}",
-                    color=discord.Color.gold(),
-                    timestamp=datetime.now(kyiv_tz)
-                )
-                
-                embed.add_field(
-                    name="Бої за сьогодні",
-                    value=f"🔹 {battles_data.get('battles', 0)} боїв\n"
-                          f"🔹 {battles_data.get('wins', 0)} перемог\n"
-                          f"🔹 {win_rate:.1f}% перемог",
-                    inline=False
-                )
-                
-                embed.add_field(
-                    name="Зароблено ресурсів",
-                    value=f"🪙 {battles_data.get('resource_absorbed', 0)} кубів",
-                    inline=False
-                )
-                
-                if stronghold_data and stronghold_data.get('active'):
-                    active_reserves = "\n".join(
-                        f"🔹 {res['title']} (до {res['end_time']})"
-                        for res in stronghold_data['active']
-                    )
-                    embed.add_field(
-                        name="Активні резерви",
-                        value=active_reserves,
-                        inline=False
-                    )
-                
-                await channel.send(embed=embed)
-                print("Статистику успішно надіслано!")
-                
-            except Exception as e:
-                print(f"Помилка при надсиланні статистики: {str(e)}")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -303,6 +180,56 @@ async def on_member_join(member):
                         print(f"Помилка надання ролі: {e}")
     except Exception as e:
         print(f"Помилка обробки нового учасника: {e}")
+    
+    # Обробка привітальних повідомлень
+    if str(guild.id) in welcome_messages:
+        channel_id = welcome_messages[str(guild.id)]["channel_id"]
+        channel = guild.get_channel(channel_id)
+        if channel:
+            try:
+                # Отримуємо інформацію про того, хто запросив
+                inviter = "Невідомо"
+                if used_invite and used_invite.inviter:
+                    inviter = used_invite.inviter.mention
+                
+                # Створюємо embed
+                embed = discord.Embed(
+                    title=f"Ласкаво просимо на сервер, {member.display_name}!",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(pytz.timezone('Europe/Kiev'))
+                )
+                
+                # Додаємо аватар справа
+                embed.set_thumbnail(url=member.display_avatar.url)
+                
+                # Основна інформація
+                embed.add_field(
+                    name="Користувач",
+                    value=f"{member.mention}\n{member.display_name}",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="Запросив",
+                    value=inviter,
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="Дата реєстрації в Discord",
+                    value=member.created_at.strftime("%d.%m.%Y"),
+                    inline=False
+                )
+                
+                # Підвал з назвою сервера
+                embed.set_footer(
+                    text=f"{guild.name} | Приєднався: {datetime.now(pytz.timezone('Europe/Kiev')).strftime('%d.%m.%Y о %H:%M')}",
+                    icon_url=guild.icon.url if guild.icon else None
+                )
+                
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Помилка при відправці привітання: {e}")
 
 @bot.event
 async def on_invite_create(invite):
@@ -320,8 +247,6 @@ async def on_ready():
     kyiv_tz = pytz.timezone('Europe/Kiev')
     now = datetime.now(kyiv_tz)
     print(f"Поточний час (Київ): {now}")
-    print(f"WG_API_KEY: {'встановлено' if WG_API_KEY else 'не встановлено'}")
-    print(f"CLAN_ID: {'встановлено' if CLAN_ID else 'не встановлено'}")
     
     for guild in bot.guilds:
         await update_invite_cache(guild)
@@ -334,11 +259,6 @@ async def on_ready():
     
     check_voice_activity.start()
     update_voice_activity.start()
-    if active_stats_tracking:
-        send_voice_activity_stats.start()
-    if stronghold_stats_config and not stronghold_stats_task.is_running():
-        stronghold_stats_task.start()
-        print("Фонову задачу stronghold_stats_task запущено!")
 
 # ========== КОМАНДИ ==========
 
@@ -400,35 +320,6 @@ async def track_voice(interaction: discord.Interaction,
         f"⏳ Автовидалення через {delete_after} хв",
         ephemeral=True
     )
-
-@bot.tree.command(name="voice_stats", description="Автоматична статистика активності")
-@app_commands.describe(
-    channel="Канал для статистики",
-    count="Кількість користувачів у топі",
-    enable="Увімкнути/вимкнути"
-)
-async def voice_stats(interaction: discord.Interaction,
-                    channel: discord.TextChannel,
-                    count: app_commands.Range[int, 1, 25] = 10,
-                    enable: bool = True):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
-        return
-    
-    if enable:
-        active_stats_tracking[interaction.guild_id] = {
-            "channel_id": channel.id,
-            "count": count
-        }
-        if not send_voice_activity_stats.is_running():
-            send_voice_activity_stats.start()
-        await interaction.response.send_message(
-            f"📊 Статистика увімкнена для {channel.mention}",
-            ephemeral=True
-        )
-    else:
-        active_stats_tracking.pop(interaction.guild_id, None)
-        await interaction.response.send_message("📊 Статистика вимкнена", ephemeral=True)
 
 @bot.tree.command(name="remove_default_only", description="Видаляє користувачів тільки з @everyone")
 async def remove_default_only(interaction: discord.Interaction):
@@ -585,125 +476,37 @@ async def send_embed(
             ephemeral=True
         )
 
-@bot.tree.command(name="stronghold_stats", description="Налаштувати автоматичну статистику укріпрайону")
+@bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
 @app_commands.describe(
-    channel="Канал для надсилання статистики",
-    hour="Година надсилання (0-23, Київський час)",
-    minute="Хвилина надсилання (0-59)",
-    enable="Увімкнути/вимкнути автоматичне надсилання"
+    channel="Канал для привітальних повідомлень"
 )
-async def stronghold_stats(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    hour: app_commands.Range[int, 0, 23] = 18,
-    minute: app_commands.Range[int, 0, 59] = 0,
-    enable: bool = True
-):
+async def setup_welcome(interaction: discord.Interaction, channel: discord.TextChannel):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
     
-    if not WG_API_KEY or not CLAN_ID:
-        return await interaction.response.send_message(
-            "❌ Не налаштовано API ключ або ID клану. Перевірте змінні оточення.",
-            ephemeral=True
-        )
+    welcome_messages[str(interaction.guild.id)] = {
+        "channel_id": channel.id
+    }
+    save_welcome_data()
     
-    if enable:
-        stronghold_stats_config[interaction.guild_id] = {
-            "channel_id": channel.id,
-            "hour": hour,
-            "minute": minute
-        }
-        
-        if not stronghold_stats_task.is_running():
-            stronghold_stats_task.start()
-            print("Фонову задачу stronghold_stats_task запущено!")
-        
-        # Додаємо інформацію про київський час
-        kyiv_tz = pytz.timezone('Europe/Kiev')
-        now = datetime.now(kyiv_tz)
-        
-        await interaction.response.send_message(
-            f"✅ Статистика укріпрайону буде надсилатись щодня о {hour:02d}:{minute:02d} (Київський час) у {channel.mention}\n"
-            f"Поточний час у Києві: {now.hour}:{now.minute}",
-            ephemeral=True
-        )
-        
-        print(f"Нова конфігурація: {stronghold_stats_config[interaction.guild_id]}")
-    else:
-        stronghold_stats_config.pop(interaction.guild_id, None)
-        await interaction.response.send_message("❌ Автоматичне надсилання статистики вимкнено", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ Привітальні повідомлення будуть надсилатися у канал {channel.mention}",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="stronghold_now", description="Отримати поточну статистику укріпрайону")
-async def stronghold_now(interaction: discord.Interaction):
-    if not WG_API_KEY or not CLAN_ID:
-        return await interaction.response.send_message("❌ Не налаштовано API ключ або ID клану", ephemeral=True)
+@bot.tree.command(name="disable_welcome", description="Вимкнути привітальні повідомлення")
+async def disable_welcome(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
     
-    await interaction.response.defer()
+    if str(interaction.guild.id) in welcome_messages:
+        welcome_messages.pop(str(interaction.guild.id))
+        save_welcome_data()
     
-    # Встановлюємо київський час
-    kyiv_tz = pytz.timezone('Europe/Kiev')
-    
-    # Отримуємо дані про клан
-    clan_data = await get_wg_api_data("clans/info/", {
-        'clan_id': CLAN_ID,
-        'fields': "name,tag"
-    })
-    
-    if not clan_data or str(CLAN_ID) not in clan_data:
-        return await interaction.followup.send("❌ Не вдалося отримати дані клану", ephemeral=True)
-    
-    clan_info = clan_data[str(CLAN_ID)]
-    
-    # Отримуємо статистику укріпрайону
-    stronghold_data = await get_wg_api_data("stronghold/clanreserves/", {
-        'clan_id': CLAN_ID
-    })
-    
-    # Отримуємо статистику боїв
-    battles_data = await get_wg_api_data("stronghold/clanbattles/", {
-        'clan_id': CLAN_ID,
-        'fields': "battles,wins,resource_absorbed"
-    })
-    
-    if not battles_data:
-        return await interaction.followup.send("❌ Не вдалося отримати статистику боїв", ephemeral=True)
-    
-    # Формуємо embed
-    win_rate = (battles_data.get('wins', 0) / battles_data.get('battles', 1)) * 100 if battles_data.get('battles', 0) > 0 else 0
-    
-    embed = discord.Embed(
-        title=f"Поточна статистика [{clan_info['tag']}] {clan_info['name']}",
-        color=discord.Color.green(),
-        timestamp=datetime.now(kyiv_tz)
+    await interaction.response.send_message(
+        "✅ Привітальні повідомлення вимкнено",
+        ephemeral=True
     )
-    
-    embed.add_field(
-        name="Бої за сьогодні",
-        value=f"🔹 {battles_data.get('battles', 0)} боїв\n"
-              f"🔹 {battles_data.get('wins', 0)} перемог\n"
-              f"🔹 {win_rate:.1f}% перемог",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="Зароблено ресурсів",
-        value=f"🪙 {battles_data.get('resource_absorbed', 0)} кубів",
-        inline=False
-    )
-    
-    if stronghold_data and stronghold_data.get('active'):
-        active_reserves = "\n".join(
-            f"🔹 {res['title']} (до {res['end_time']})"
-            for res in stronghold_data['active']
-        )
-        embed.add_field(
-            name="Активні резерви",
-            value=active_reserves,
-            inline=False
-        )
-    
-    await interaction.followup.send(embed=embed)
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
