@@ -154,6 +154,8 @@ async def on_member_join(member):
         return
     
     guild = member.guild
+    assigned_role = None
+    
     try:
         current_invites = await guild.invites()
         used_invite = None
@@ -173,6 +175,7 @@ async def on_member_join(member):
                 if role:
                     try:
                         await member.add_roles(role)
+                        assigned_role = role
                         print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
                     except discord.Forbidden:
                         print(f"Немає дозволу надавати роль {role.name}")
@@ -192,11 +195,17 @@ async def on_member_join(member):
                 if used_invite and used_invite.inviter:
                     inviter = used_invite.inviter.mention
                 
+                # Отримуємо інформацію про призначену роль
+                role_info = "Не призначено"
+                if assigned_role:
+                    role_info = assigned_role.mention
+                
                 # Створюємо embed
+                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
                 embed = discord.Embed(
-                    title=f"Ласкаво просимо на сервер, {member.display_name}!",
+                    title=f"Ласкаво просим�� на сервер, {member.display_name}!",
                     color=discord.Color.green(),
-                    timestamp=datetime.now(pytz.timezone('Europe/Kiev'))
+                    timestamp=kyiv_time
                 )
                 
                 # Додаємо аватар справа
@@ -216,6 +225,12 @@ async def on_member_join(member):
                 )
                 
                 embed.add_field(
+                    name="Призначена роль",
+                    value=role_info,
+                    inline=False
+                )
+                
+                embed.add_field(
                     name="Дата реєстрації в Discord",
                     value=member.created_at.strftime("%d.%m.%Y"),
                     inline=False
@@ -223,7 +238,7 @@ async def on_member_join(member):
                 
                 # Підвал з назвою сервера
                 embed.set_footer(
-                    text=f"{guild.name} | Приєднався: {datetime.now(pytz.timezone('Europe/Kiev')).strftime('%d.%m.%Y о %H:%M')}",
+                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
                     icon_url=guild.icon.url if guild.icon else None
                 )
                 
@@ -490,7 +505,14 @@ async def setup_welcome(interaction: discord.Interaction, channel: discord.TextC
     save_welcome_data()
     
     await interaction.response.send_message(
-        f"✅ Привітальні повідомлення будуть надсилатися у канал {channel.mention}",
+        f"✅ Привітальні повідомлення будуть надсилатися у канал {channel.mention}\n"
+        f"Тепер при вході нового учасника буде показано:\n"
+        f"- Аватар користувача\n"
+        f"- Ім'я та мітку\n"
+        f"- Хто запросив\n"
+        f"- Призначену роль\n"
+        f"- Дату реєстрації в Discord\n"
+        f"- Час приєднання до сервера",
         ephemeral=True
     )
 
