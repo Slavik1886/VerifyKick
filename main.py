@@ -203,7 +203,7 @@ async def on_member_join(member):
                 # Створюємо embed
                 kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
                 embed = discord.Embed(
-                    title=f"Ласкаво просим�� на сервер, {member.display_name}!",
+                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
                     color=discord.Color.green(),
                     timestamp=kyiv_time
                 )
