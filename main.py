@@ -181,6 +181,20 @@ async def on_member_join(member):
                         print(f"Немає дозволу надавати роль {role.name}")
                     except Exception as e:
                         print(f"Помилка надання ролі: {e}")
+            
+            # Перевіряємо наявність додаткових ролей для цього запрошення
+            bonus_key = f"bonus_{used_invite.code}"
+            if bonus_key in guild_roles:
+                bonus_role_id = guild_roles[bonus_key]
+                bonus_role = guild.get_role(bonus_role_id)
+                if bonus_role:
+                    try:
+                        await member.add_roles(bonus_role)
+                        print(f"Надано додаткову роль {bonus_role.name} користувачу {member} за запрошення {used_invite.code}")
+                    except discord.Forbidden:
+                        print(f"Немає дозволу надавати додаткову роль {bonus_role.name}")
+                    except Exception as e:
+                        print(f"Помилка надання додаткової ролі: {e}")
     except Exception as e:
         print(f"Помилка обробки нового учасника: {e}")
     
@@ -203,7 +217,7 @@ async def on_member_join(member):
                 # Створюємо embed
                 kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
                 embed = discord.Embed(
-                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
+                    title=f"Ласкаво просимо на сервер, {member.display_name}!",
                     color=discord.Color.green(),
                     timestamp=kyiv_time
                 )
@@ -308,6 +322,126 @@ async def assign_role_to_invite(interaction: discord.Interaction, invite: str, r
             f"❌ Помилка: {str(e)}",
             ephemeral=True
         )
+
+@bot.tree.command(name="add_invite_role", description="Додати додаткову роль для запрошення")
+@app_commands.describe(
+    invite="Код запрошення (без discord.gg/)",
+    role="Додаткова роль для надання"
+)
+async def add_invite_role(interaction: discord.Interaction, invite: str, role: discord.Role):
+    """Додає додаткову роль, яка буде надана разом з основною при вході через запрошення"""
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    try:
+        invites = await interaction.guild.invites()
+        if not any(inv.code == invite for inv in invites):
+            return await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        
+        # Створюємо спеціальний ключ для додаткових ролей
+        bonus_key = f"bonus_{invite}"
+        
+        if guild_id not in invite_roles:
+            invite_roles[guild_id] = {}
+        
+        invite_roles[guild_id][bonus_key] = role.id
+        save_invite_data()
+        await update_invite_cache(interaction.guild)
+        
+        await interaction.response.send_message(
+            f"✅ Користувачі, які прийдуть через запрошення `{invite}`, отримають ДОДАТКОВУ роль {role.mention}\n"
+            f"ℹ️ Ця роль буде додана НЕЗАЛЕЖНО від інших ролей",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Помилка: {str(e)}",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="remove_invite_role", description="Видалити додаткову роль для запрошення")
+@app_commands.describe(
+    invite="Код запрошення (без discord.gg/)"
+)
+async def remove_invite_role(interaction: discord.Interaction, invite: str):
+    """Видаляє додаткову роль для запрошення"""
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    guild_id = str(interaction.guild.id)
+    bonus_key = f"bonus_{invite}"
+    
+    if guild_id in invite_roles and bonus_key in invite_roles[guild_id]:
+        role_id = invite_roles[guild_id].pop(bonus_key)
+        save_invite_data()
+        role = interaction.guild.get_role(role_id)
+        
+        await interaction.response.send_message(
+            f"✅ Видалено додаткову роль {role.mention if role else 'Unknown'} для запрошення `{invite}`",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"❌ Додаткова роль для запрошення `{invite}` не знайдена",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="list_invite_roles", description="Показати всі ролі для запрошень")
+async def list_invite_roles(interaction: discord.Interaction):
+    """Показує список усіх ролей, пов'язаних із запрошеннями"""
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in invite_roles or not invite_roles[guild_id]:
+        return await interaction.response.send_message("ℹ️ Немає налаштованих ролей для запрошень", ephemeral=True)
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        invites = await interaction.guild.invites()
+        invite_codes = {inv.code: inv for inv in invites}
+    except:
+        invite_codes = {}
+    
+    regular_roles = []
+    bonus_roles = []
+    
+    for key, role_id in invite_roles[guild_id].items():
+        role = interaction.guild.get_role(role_id)
+        if not role:
+            continue
+            
+        if key.startswith("bonus_"):
+            invite_code = key[6:]
+            inv = invite_codes.get(invite_code)
+            creator = f" (створено {inv.inviter.mention})" if inv and inv.inviter else ""
+            bonus_roles.append(f"• Запрошення `{invite_code}`{creator} → {role.mention}")
+        else:
+            inv = invite_codes.get(key)
+            creator = f" (створено {inv.inviter.mention})" if inv and inv.inviter else ""
+            regular_roles.append(f"• Запрошення `{key}`{creator} → {role.mention}")
+    
+    embed = discord.Embed(title="Ролі для запрошень", color=discord.Color.blue())
+    
+    if regular_roles:
+        embed.add_field(
+            name="Основні ролі",
+            value="\n".join(regular_roles) or "Немає",
+            inline=False
+        )
+    
+    if bonus_roles:
+        embed.add_field(
+            name="Додаткові ролі",
+            value="\n".join(bonus_roles) or "Немає",
+            inline=False
+        )
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
 @app_commands.describe(
