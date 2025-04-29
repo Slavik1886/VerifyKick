@@ -11,13 +11,15 @@ import aiohttp
 from typing import Optional, List, Union
 import pytz
 
-intents = discord.Intents.default()
-intents.members = True
-intents.guilds = True
-intents.message_content = True
-intents.voice_states = True
-intents.invites = True
-intents.presences = True  # Added for online status tracking
+# Налаштування intents
+intents = discord.Intents().all()
+print("Налаштування intents:")
+print(f"Members: {intents.members}")
+print(f"Guilds: {intents.guilds}")
+print(f"Message Content: {intents.message_content}")
+print(f"Voice States: {intents.voice_states}")
+print(f"Invites: {intents.invites}")
+print(f"Presences: {intents.presences}")
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -594,8 +596,16 @@ async def on_ready():
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
-    raise ValueError("Відсутній токен Discord")
+    raise ValueError("Відсутній токен Discord. Перевірте змінну середовища DISCORD_TOKEN")
+
+print(f"Довжина токену: {len(TOKEN) if TOKEN else 0}")
 
 if __name__ == '__main__':
     print("Запуск бота...")
-    bot.run(TOKEN) 
+    try:
+        bot.run(TOKEN)
+    except discord.errors.PrivilegedIntentsRequired as e:
+        print(f"Помилка з намірами: {e}")
+        print("Перевірте налаштування на https://discord.com/developers/applications/")
+    except Exception as e:
+        print(f"Інша помилка: {type(e).__name__} - {e}") 
