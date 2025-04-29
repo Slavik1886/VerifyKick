@@ -294,7 +294,7 @@ async def on_ready():
     print(f'Бот {bot.user} онлайн!')
     
     # Встановлюємо київський час для логування
-    kyiv_tz = pytz.timezone('Europe/Kiev'))
+    kyiv_tz = pytz.timezone('Europe/Kiev')
     now = datetime.now(kyiv_tz)
     print(f"Поточний час (Київ): {now}")
     
