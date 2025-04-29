@@ -8,7 +8,7 @@ from collections import defaultdict
 import json
 import random
 import aiohttp
-from typing import Optional
+from typing import Optional, List
 import pytz
 
 intents = discord.Intents.default()
@@ -26,6 +26,7 @@ tracked_channels = {}
 warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
+time_locks = {}  # {user_id: (unlock_time, reason)}
 
 # Система ролей за запрошеннями
 invite_roles = {}
@@ -90,6 +91,20 @@ async def delete_after(message, minutes):
     except: pass
 
 @tasks.loop(minutes=1)
+async def check_time_locks():
+    """Перевіряє час завершення блокувань"""
+    current_time = datetime.utcnow()
+    to_remove = []
+    
+    for user_id, (unlock_time, reason) in time_locks.items():
+        if current_time >= unlock_time:
+            to_remove.append(user_id)
+    
+    for user_id in to_remove:
+        time_locks.pop(user_id, None)
+        print(f"Тайм-лок для {user_id} закінчився")
+
+@tasks.loop(minutes=1)
 async def update_voice_activity():
     global last_activity_update
     now = datetime.utcnow()
@@ -149,6 +164,26 @@ async def on_voice_state_update(member, before, after):
             warning_sent.discard(member_key)
 
 @bot.event
+async def on_message(message):
+    # Перевіряємо чи користувач заблокований
+    if message.author.id in time_locks:
+        unlock_time, reason = time_locks[message.author.id]
+        if datetime.utcnow() < unlock_time:
+            try:
+                await message.delete()
+                remaining = unlock_time - datetime.utcnow()
+                hours, remainder = divmod(remaining.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                await message.author.send(
+                    f"⏳ Ви заблоковані до {unlock_time.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"📌 Причина: {reason}\n"
+                    f"⏳ Залишилось: {hours} год {minutes} хв"
+                )
+            except:
+                pass
+    await bot.process_commands(message)
+
+@bot.event
 async def on_member_join(member):
     if member.bot:
         return
@@ -181,20 +216,6 @@ async def on_member_join(member):
                         print(f"Немає дозволу надавати роль {role.name}")
                     except Exception as e:
                         print(f"Помилка надання ролі: {e}")
-            
-            # Перевіряємо наявність додаткових ролей для цього запрошення
-            bonus_key = f"bonus_{used_invite.code}"
-            if bonus_key in guild_roles:
-                bonus_role_id = guild_roles[bonus_key]
-                bonus_role = guild.get_role(bonus_role_id)
-                if bonus_role:
-                    try:
-                        await member.add_roles(bonus_role)
-                        print(f"Надано додаткову роль {bonus_role.name} користувачу {member} за запрошення {used_invite.code}")
-                    except discord.Forbidden:
-                        print(f"Немає дозволу надавати додаткову роль {bonus_role.name}")
-                    except Exception as e:
-                        print(f"Помилка надання додаткової ролі: {e}")
     except Exception as e:
         print(f"Помилка обробки нового учасника: {e}")
     
@@ -273,7 +294,7 @@ async def on_ready():
     print(f'Бот {bot.user} онлайн!')
     
     # Встановлюємо київський час для логування
-    kyiv_tz = pytz.timezone('Europe/Kiev')
+    kyiv_tz = pytz.timezone('Europe/Kiev'))
     now = datetime.now(kyiv_tz)
     print(f"Поточний час (Київ): {now}")
     
@@ -288,8 +309,328 @@ async def on_ready():
     
     check_voice_activity.start()
     update_voice_activity.start()
+    check_time_locks.start()
 
 # ========== КОМАНДИ ==========
+
+@bot.tree.command(name="time_lock", description="Тимчасово заблокувати користувача")
+@app_commands.describe(
+    user="Користувач для блокування",
+    duration="Тривалість блокування (у хвилинах)",
+    reason="Причина блокування",
+    channel="Канал для повідомлення (необов'язково)"
+)
+async def time_lock(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    duration: int,
+    reason: str,
+    channel: Optional[discord.TextChannel] = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if user == interaction.user:
+        return await interaction.response.send_message("❌ Ви не можете заблокувати себе", ephemeral=True)
+    
+    if user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Не можна заблокувати адміністратора", ephemeral=True)
+    
+    unlock_time = datetime.utcnow() + timedelta(minutes=duration)
+    time_locks[user.id] = (unlock_time, reason)
+    
+    # Створюємо embed повідомлення
+    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+    embed = discord.Embed(
+        title="⛔ Користувача заблоковано",
+        color=discord.Color.red(),
+        timestamp=kyiv_time
+    )
+    
+    embed.set_thumbnail(url=user.display_avatar.url)
+    
+    embed.add_field(
+        name="Користувач",
+        value=f"{user.mention}\n{user.display_name}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Заблоковано до",
+        value=unlock_time.strftime("%Y-%m-%d %H:%M UTC"),
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Причина",
+        value=reason,
+        inline=False
+    )
+    
+    remaining = unlock_time - datetime.utcnow()
+    hours, remainder = divmod(remaining.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    embed.set_footer(
+        text=f"⏳ Залишилось: {hours} год {minutes} хв | Заблокував: {interaction.user.display_name}",
+        icon_url=interaction.user.display_avatar.url
+    )
+    
+    # Відправляємо повідомлення
+    target_channel = channel or interaction.channel
+    try:
+        await target_channel.send(embed=embed)
+        await interaction.response.send_message(
+            f"✅ {user.mention} був заблокований на {duration} хвилин",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="add_role", description="Додати роль користувачам")
+@app_commands.describe(
+    users="Користувачі для додавання ролі",
+    role="Роль для додавання",
+    reason="Причина додавання ролі",
+    channel="Канал для повідомлення (необов'язково)"
+)
+async def add_role(
+    interaction: discord.Interaction,
+    users: List[discord.Member],
+    role: discord.Role,
+    reason: str,
+    channel: Optional[discord.TextChannel] = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("❌ Ця роль вище за мою", ephemeral=True)
+    
+    success = []
+    failed = []
+    
+    for user in users:
+        try:
+            await user.add_roles(role, reason=reason)
+            success.append(user)
+        except:
+            failed.append(user)
+    
+    # Створюємо embed повідомлення
+    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+    embed = discord.Embed(
+        title="➕ Роль додана",
+        color=role.color,
+        timestamp=kyiv_time
+    )
+    
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
+    embed.add_field(
+        name="Користувачі",
+        value="\n".join([f"{user.mention} ({user.display_name})" for user in success]) or "Немає",
+        inline=False
+    )
+    
+    if failed:
+        embed.add_field(
+            name="Не вдалося додати",
+            value="\n".join([f"{user.mention} ({user.display_name})" for user in failed]),
+            inline=False
+        )
+    
+    embed.add_field(
+        name="Роль",
+        value=role.mention,
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Причина",
+        value=reason,
+        inline=True
+    )
+    
+    embed.set_footer(
+        text=f"Виконав: {interaction.user.display_name}",
+        icon_url=interaction.user.display_avatar.url
+    )
+    
+    # Відправляємо повідомлення
+    target_channel = channel or interaction.channel
+    try:
+        await target_channel.send(embed=embed)
+        response_msg = f"✅ Роль {role.mention} додана для {len(success)} користувачів"
+        if failed:
+            response_msg += f"\n❌ Не вдалося для {len(failed)} користувачів"
+        await interaction.response.send_message(response_msg, ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="rem_role", description="Видалити роль у користувачів")
+@app_commands.describe(
+    users="Користувачі для видалення ролі",
+    role="Роль для видалення",
+    reason="Причина видалення ролі",
+    channel="Канал для повідомлення (необов'язково)"
+)
+async def rem_role(
+    interaction: discord.Interaction,
+    users: List[discord.Member],
+    role: discord.Role,
+    reason: str,
+    channel: Optional[discord.TextChannel] = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("❌ Ця роль вище за мою", ephemeral=True)
+    
+    success = []
+    failed = []
+    
+    for user in users:
+        try:
+            await user.remove_roles(role, reason=reason)
+            success.append(user)
+        except:
+            failed.append(user)
+    
+    # Створюємо embed повідомлення
+    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+    embed = discord.Embed(
+        title="➖ Роль видалена",
+        color=discord.Color.red(),
+        timestamp=kyiv_time
+    )
+    
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
+    embed.add_field(
+        name="Користувачі",
+        value="\n".join([f"{user.mention} ({user.display_name})" for user in success]) or "Немає",
+        inline=False
+    )
+    
+    if failed:
+        embed.add_field(
+            name="Не вдалося видалити",
+            value="\n".join([f"{user.mention} ({user.display_name})" for user in failed]),
+            inline=False
+        )
+    
+    embed.add_field(
+        name="Роль",
+        value=role.mention,
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Причина",
+        value=reason,
+        inline=True
+    )
+    
+    embed.set_footer(
+        text=f"Виконав: {interaction.user.display_name}",
+        icon_url=interaction.user.display_avatar.url
+    )
+    
+    # Відправляємо повідомлення
+    target_channel = channel or interaction.channel
+    try:
+        await target_channel.send(embed=embed)
+        response_msg = f"✅ Роль {role.mention} видалена у {len(success)} користувачів"
+        if failed:
+            response_msg += f"\n❌ Не вдалося для {len(failed)} користувачів"
+        await interaction.response.send_message(response_msg, ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="online_members", description="Показати список онлайн користувачів")
+@app_commands.describe(
+    channel="Канал для відправки повідомлення (необов'язково)"
+)
+async def online_members(
+    interaction: discord.Interaction,
+    channel: Optional[discord.TextChannel] = None
+):
+    await interaction.response.defer(ephemeral=True)
+    
+    online_members = [
+        member for member in interaction.guild.members 
+        if not member.bot and member.status != discord.Status.offline
+    ]
+    
+    # Сортуємо за статусом (онлайн, не турбувати, неактивний)
+    status_order = {
+        discord.Status.online: 0,
+        discord.Status.idle: 1,
+        discord.Status.dnd: 2,
+        discord.Status.offline: 3
+    }
+    online_members.sort(key=lambda m: (status_order[m.status], m.display_name))
+    
+    # Створюємо embed повідомлення
+    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+    embed = discord.Embed(
+        title=f"🟢 Онлайн користувачі ({len(online_members)}/{len(interaction.guild.members)})",
+        color=discord.Color.green(),
+        timestamp=kyiv_time
+    )
+    
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
+    # Додаємо користувачів групами по 15
+    chunks = [online_members[i:i+15] for i in range(0, len(online_members), 15)]
+    for i, chunk in enumerate(chunks):
+        status_emojis = {
+            discord.Status.online: "🟢",
+            discord.Status.idle: "🌙",
+            discord.Status.dnd: "⛔",
+            discord.Status.offline: "⚫"
+        }
+        
+        members_list = []
+        for member in chunk:
+            emoji = status_emojis.get(member.status, "⚫")
+            members_list.append(f"{emoji} {member.mention} ({member.display_name})")
+        
+        embed.add_field(
+            name=f"Сторінка {i+1}",
+            value="\n".join(members_list) or "Немає онлайн користувачів",
+            inline=False
+        )
+    
+    embed.set_footer(
+        text=f"Сервер: {interaction.guild.name}",
+        icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+    )
+    
+    # Відправляємо повідомлення
+    target_channel = channel or interaction.channel
+    try:
+        await target_channel.send(embed=embed)
+        await interaction.followup.send(
+            f"✅ Список онлайн користувачів відправлено до {target_channel.mention}",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
 @app_commands.describe(
@@ -322,126 +663,6 @@ async def assign_role_to_invite(interaction: discord.Interaction, invite: str, r
             f"❌ Помилка: {str(e)}",
             ephemeral=True
         )
-
-@bot.tree.command(name="add_invite_role", description="Додати додаткову роль для запрошення")
-@app_commands.describe(
-    invite="Код запрошення (без discord.gg/)",
-    role="Додаткова роль для надання"
-)
-async def add_invite_role(interaction: discord.Interaction, invite: str, role: discord.Role):
-    """Додає додаткову роль, яка буде надана разом з основною при вході через запрошення"""
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
-    
-    try:
-        invites = await interaction.guild.invites()
-        if not any(inv.code == invite for inv in invites):
-            return await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
-        
-        guild_id = str(interaction.guild.id)
-        
-        # Створюємо спеціальний ключ для додаткових ролей
-        bonus_key = f"bonus_{invite}"
-        
-        if guild_id not in invite_roles:
-            invite_roles[guild_id] = {}
-        
-        invite_roles[guild_id][bonus_key] = role.id
-        save_invite_data()
-        await update_invite_cache(interaction.guild)
-        
-        await interaction.response.send_message(
-            f"✅ Користувачі, які прийдуть через запрошення `{invite}`, отримають ДОДАТКОВУ роль {role.mention}\n"
-            f"ℹ️ Ця роль буде додана НЕЗАЛЕЖНО від інших ролей",
-            ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Помилка: {str(e)}",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="remove_invite_role", description="Видалити додаткову роль для запрошення")
-@app_commands.describe(
-    invite="Код запрошення (без discord.gg/)"
-)
-async def remove_invite_role(interaction: discord.Interaction, invite: str):
-    """Видаляє додаткову роль для запрошення"""
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
-    
-    guild_id = str(interaction.guild.id)
-    bonus_key = f"bonus_{invite}"
-    
-    if guild_id in invite_roles and bonus_key in invite_roles[guild_id]:
-        role_id = invite_roles[guild_id].pop(bonus_key)
-        save_invite_data()
-        role = interaction.guild.get_role(role_id)
-        
-        await interaction.response.send_message(
-            f"✅ Видалено додаткову роль {role.mention if role else 'Unknown'} для запрошення `{invite}`",
-            ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            f"❌ Додаткова роль для запрошення `{invite}` не знайдена",
-            ephemeral=True
-        )
-
-@bot.tree.command(name="list_invite_roles", description="Показати всі ролі для запрошень")
-async def list_invite_roles(interaction: discord.Interaction):
-    """Показує список усіх ролей, пов'язаних із запрошеннями"""
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
-    
-    guild_id = str(interaction.guild.id)
-    
-    if guild_id not in invite_roles or not invite_roles[guild_id]:
-        return await interaction.response.send_message("ℹ️ Немає налаштованих ролей для запрошень", ephemeral=True)
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        invites = await interaction.guild.invites()
-        invite_codes = {inv.code: inv for inv in invites}
-    except:
-        invite_codes = {}
-    
-    regular_roles = []
-    bonus_roles = []
-    
-    for key, role_id in invite_roles[guild_id].items():
-        role = interaction.guild.get_role(role_id)
-        if not role:
-            continue
-            
-        if key.startswith("bonus_"):
-            invite_code = key[6:]
-            inv = invite_codes.get(invite_code)
-            creator = f" (створено {inv.inviter.mention})" if inv and inv.inviter else ""
-            bonus_roles.append(f"• Запрошення `{invite_code}`{creator} → {role.mention}")
-        else:
-            inv = invite_codes.get(key)
-            creator = f" (створено {inv.inviter.mention})" if inv and inv.inviter else ""
-            regular_roles.append(f"• Запрошення `{key}`{creator} → {role.mention}")
-    
-    embed = discord.Embed(title="Ролі для запрошень", color=discord.Color.blue())
-    
-    if regular_roles:
-        embed.add_field(
-            name="Основні ролі",
-            value="\n".join(regular_roles) or "Немає",
-            inline=False
-        )
-    
-    if bonus_roles:
-        embed.add_field(
-            name="Додаткові ролі",
-            value="\n".join(bonus_roles) or "Немає",
-            inline=False
-        )
-    
-    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
 @app_commands.describe(
