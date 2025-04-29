@@ -8,36 +8,15 @@ from collections import defaultdict
 import json
 import random
 import aiohttp
-from typing import Optional, List, Union
+from typing import Optional
 import pytz
-import time
 
-# Налаштування intents
 intents = discord.Intents.default()
-intents.guilds = True
 intents.members = True
+intents.guilds = True
 intents.message_content = True
 intents.voice_states = True
 intents.invites = True
-intents.presences = True
-intents.guild_messages = True
-intents.guild_reactions = True
-intents.guild_typing = True
-intents.dm_messages = True
-intents.dm_reactions = True
-intents.dm_typing = True
-intents.integrations = True
-intents.webhooks = True
-intents.bans = True
-intents.emojis_and_stickers = True
-
-print("Налаштування intents:")
-print(f"Members: {intents.members}")
-print(f"Guilds: {intents.guilds}")
-print(f"Message Content: {intents.message_content}")
-print(f"Voice States: {intents.voice_states}")
-print(f"Invites: {intents.invites}")
-print(f"Presences: {intents.presences}")
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -47,9 +26,6 @@ tracked_channels = {}
 warning_sent = set()
 voice_activity = defaultdict(timedelta)
 last_activity_update = datetime.utcnow()
-
-# Система тимчасових блокувань
-time_locks = {}  # {user_id: {"end_time": datetime, "log_channel": channel_id}}
 
 # Система ролей за запрошеннями
 invite_roles = {}
@@ -227,7 +203,7 @@ async def on_member_join(member):
                 # Створюємо embed
                 kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
                 embed = discord.Embed(
-                    title=f"Ласкаво просимо на сервер, {member.display_name}!",
+                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
                     color=discord.Color.green(),
                     timestamp=kyiv_time
                 )
@@ -277,6 +253,29 @@ async def on_invite_create(invite):
 @bot.event
 async def on_invite_delete(invite):
     await update_invite_cache(invite.guild)
+
+@bot.event
+async def on_ready():
+    print(f'Бот {bot.user} онлайн!')
+    
+    # Встановлюємо київський час для логування
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Поточний час (Київ): {now}")
+    
+    for guild in bot.guilds:
+        await update_invite_cache(guild)
+    
+    try:
+        synced = await bot.tree.sync()
+        print(f"Синхронізовано {len(synced)} команд")
+    except Exception as e:
+        print(f"Помилка синхронізації: {e}")
+    
+    check_voice_activity.start()
+    update_voice_activity.start()
+
+# ========== КОМАНДИ ==========
 
 @bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
 @app_commands.describe(
@@ -531,111 +530,10 @@ async def disable_welcome(interaction: discord.Interaction):
         ephemeral=True
     )
 
-# Функція для форматування часу
-def format_duration(td: timedelta) -> str:
-    total_seconds = int(td.total_seconds())
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-    
-    parts = []
-    if hours > 0:
-        parts.append(f"{hours}г")
-    if minutes > 0:
-        parts.append(f"{minutes}хв")
-    if seconds > 0 or not parts:
-        parts.append(f"{seconds}с")
-    
-    return " ".join(parts)
-
-# Функція для створення таймера
-def create_timer_text(end_time: datetime) -> str:
-    now = datetime.now(pytz.UTC)
-    if end_time < now:
-        return "Час вийшов!"
-    
-    remaining = end_time - now
-    return f"⏳ Залишилось: {format_duration(remaining)}"
-
-@tasks.loop(seconds=30)
-async def check_time_locks():
-    now = datetime.now(pytz.UTC)
-    to_remove = []
-    
-    for user_id, lock_data in time_locks.items():
-        if now >= lock_data["end_time"]:
-            guild = bot.get_guild(lock_data["guild_id"])
-            if guild:
-                member = guild.get_member(user_id)
-                if member:
-                    # Знімаємо обмеження
-                    try:
-                        await member.timeout_remove()
-                        
-                        # Надсилаємо повідомлення про зняття обмеження
-                        channel = guild.get_channel(lock_data["log_channel"])
-                        if channel:
-                            embed = discord.Embed(
-                                title="🔓 Обмеження знято",
-                                description=f"Користувач {member.mention} знову може спілкуватися",
-                                color=discord.Color.green(),
-                                timestamp=now
-                            )
-                            embed.set_thumbnail(url=member.display_avatar.url)
-                            await channel.send(embed=embed)
-                    except:
-                        pass
-            to_remove.append(user_id)
-    
-    for user_id in to_remove:
-        time_locks.pop(user_id, None)
-
-@bot.event
-async def on_ready():
-    print(f'Бот {bot.user} онлайн!')
-    
-    # Встановлюємо київський час для логування
-    kyiv_tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(kyiv_tz)
-    print(f"Поточний час (Київ): {now}")
-    
-    for guild in bot.guilds:
-        await update_invite_cache(guild)
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f"Синхронізовано {len(synced)} команд")
-    except Exception as e:
-        print(f"Помилка синхронізації: {e}")
-    
-    check_voice_activity.start()
-    update_voice_activity.start()
-    check_time_locks.start()  # Додаємо перевірку тимчасових блокувань
-
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
-    raise ValueError("Відсутній токен Discord. Перевірте змінну середовища DISCORD_TOKEN")
-
-print(f"Довжина токену: {len(TOKEN) if TOKEN else 0}")
+    raise ValueError("Відсутній токен Discord")
 
 if __name__ == '__main__':
     print("Запуск бота...")
-    try:
-        print("Очікування 5 секунд перед підключенням...")
-        time.sleep(5)  # Додаємо невелику затримку
-        bot.run(TOKEN, reconnect=True)
-    except discord.errors.PrivilegedIntentsRequired as e:
-        print(f"Помилка з намірами: {e}")
-        print("Перевірте налаштування на https://discord.com/developers/applications/")
-        print("Переконайтеся, що увімкнені наступні наміри:")
-        print("- Presence Intent")
-        print("- Server Members Intent")
-        print("- Message Content Intent")
-    except discord.errors.LoginFailure as e:
-        print(f"Помилка входу: {e}")
-        print("Перевірте правильність токену")
-    except Exception as e:
-        print(f"Інша помилка: {type(e).__name__} - {e}")
-        print("Повний traceback:")
-        import traceback
-        traceback.print_exc() 
+    bot.run(TOKEN)
