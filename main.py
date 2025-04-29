@@ -10,9 +10,27 @@ import random
 import aiohttp
 from typing import Optional, List, Union
 import pytz
+import time
 
 # Налаштування intents
-intents = discord.Intents().all()
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+intents.message_content = True
+intents.voice_states = True
+intents.invites = True
+intents.presences = True
+intents.guild_messages = True
+intents.guild_reactions = True
+intents.guild_typing = True
+intents.dm_messages = True
+intents.dm_reactions = True
+intents.dm_typing = True
+intents.integrations = True
+intents.webhooks = True
+intents.bans = True
+intents.emojis_and_stickers = True
+
 print("Налаштування intents:")
 print(f"Members: {intents.members}")
 print(f"Guilds: {intents.guilds}")
@@ -603,9 +621,21 @@ print(f"Довжина токену: {len(TOKEN) if TOKEN else 0}")
 if __name__ == '__main__':
     print("Запуск бота...")
     try:
-        bot.run(TOKEN)
+        print("Очікування 5 секунд перед підключенням...")
+        time.sleep(5)  # Додаємо невелику затримку
+        bot.run(TOKEN, reconnect=True)
     except discord.errors.PrivilegedIntentsRequired as e:
         print(f"Помилка з намірами: {e}")
         print("Перевірте налаштування на https://discord.com/developers/applications/")
+        print("Переконайтеся, що увімкнені наступні наміри:")
+        print("- Presence Intent")
+        print("- Server Members Intent")
+        print("- Message Content Intent")
+    except discord.errors.LoginFailure as e:
+        print(f"Помилка входу: {e}")
+        print("Перевірте правильність токену")
     except Exception as e:
-        print(f"Інша помилка: {type(e).__name__} - {e}") 
+        print(f"Інша помилка: {type(e).__name__} - {e}")
+        print("Повний traceback:")
+        import traceback
+        traceback.print_exc() 
