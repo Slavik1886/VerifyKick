@@ -34,6 +34,9 @@ invite_cache = {}
 # Система привітальних повідомлень
 welcome_messages = {}
 
+# Система відстеження заявок
+application_tracking = {}
+
 def load_invite_data():
     try:
         with open('invite_roles.json', 'r') as f:
@@ -56,8 +59,21 @@ def save_welcome_data():
     with open('welcome_messages.json', 'w') as f:
         json.dump(welcome_messages, f)
 
+def load_application_data():
+    try:
+        with open('application_tracking.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_application_data():
+    with open('application_tracking.json', 'w') as f:
+        json.dump(application_tracking, f)
+
+# Завантаження даних при запуску
 invite_roles = load_invite_data()
 welcome_messages = load_welcome_data()
+application_tracking = load_application_data()
 
 async def get_wg_api_data(endpoint: str, params: dict) -> Optional[dict]:
     """Функція для взаємодії з Wargaming API"""
@@ -247,6 +263,51 @@ async def on_member_join(member):
                 print(f"Помилка при відправці привітання: {e}")
 
 @bot.event
+async def on_member_update(before, after):
+    # Перевіряємо, чи це оновлення проходження Membership Screening
+    if before.pending and not after.pending:
+        guild_id = str(after.guild.id)
+        if guild_id in application_tracking:
+            channel_id = application_tracking[guild_id]["channel_id"]
+            channel = after.guild.get_channel(channel_id)
+            if channel:
+                try:
+                    # Отримуємо час у київському часовому поясі
+                    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+                    
+                    # Створюємо embed
+                    embed = discord.Embed(
+                        title="📝 Нова заявка прийнята",
+                        description=f"{after.mention} пройшов перевірку та приєднався до сервера",
+                        color=discord.Color.green(),
+                        timestamp=kyiv_time
+                    )
+                    
+                    # Додаємо інформацію про користувача
+                    embed.add_field(
+                        name="Користувач",
+                        value=f"{after.mention}\n{after.display_name}",
+                        inline=True
+                    )
+                    
+                    embed.add_field(
+                        name="Дата реєстрації в Discord",
+                        value=after.created_at.strftime("%d.%m.%Y"),
+                        inline=True
+                    )
+                    
+                    embed.set_thumbnail(url=after.display_avatar.url)
+                    
+                    embed.set_footer(
+                        text=f"{after.guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
+                        icon_url=after.guild.icon.url if after.guild.icon else None
+                    )
+                    
+                    await channel.send(embed=embed)
+                except Exception as e:
+                    print(f"Помилка при відправці повідомлення про заявку: {e}")
+
+@bot.event
 async def on_invite_create(invite):
     await update_invite_cache(invite.guild)
 
@@ -265,6 +326,12 @@ async def on_ready():
     
     for guild in bot.guilds:
         await update_invite_cache(guild)
+        # Перевіряємо, чи увімкнено відстеження заявок для цього сервера
+        if str(guild.id) in application_tracking:
+            channel_id = application_tracking[str(guild.id)]["channel_id"]
+            channel = guild.get_channel(channel_id)
+            if channel:
+                print(f"Відстеження заявок активовано для сервера {guild.name} (канал: {channel.name})")
     
     try:
         synced = await bot.tree.sync()
@@ -527,6 +594,43 @@ async def disable_welcome(interaction: discord.Interaction):
     
     await interaction.response.send_message(
         "✅ Привітальні повідомлення вимкнено",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="setup_application_tracking", description="Налаштувати канал для повідомлень про заявки")
+@app_commands.describe(
+    channel="Канал для повідомлень про заявки"
+)
+async def setup_application_tracking(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    application_tracking[str(interaction.guild.id)] = {
+        "channel_id": channel.id
+    }
+    save_application_data()
+    
+    await interaction.response.send_message(
+        f"✅ Повідомлення про заявки будуть надсилатися у канал {channel.mention}\n"
+        f"Тепер при прийнятті заявки буде показано:\n"
+        f"- Аватар користувача\n"
+        f"- Ім'я та мітку\n"
+        f"- Дату реєстрації в Discord\n"
+        f"- Час приєднання до сервера",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="disable_application_tracking", description="Вимкнути повідомлення про заявки")
+async def disable_application_tracking(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if str(interaction.guild.id) in application_tracking:
+        application_tracking.pop(str(interaction.guild.id))
+        save_application_data()
+    
+    await interaction.response.send_message(
+        "✅ Повідомлення про заявки вимкнено",
         ephemeral=True
     )
 
