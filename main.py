@@ -1,5 +1,5 @@
 import discord
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands, tasks
 import os
 from datetime import datetime, timedelta
@@ -17,6 +17,7 @@ intents.guilds = True
 intents.message_content = True
 intents.voice_states = True
 intents.invites = True
+intents.messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -33,6 +34,9 @@ invite_cache = {}
 
 # Система привітальних повідомлень
 welcome_messages = {}
+
+# Система заявок на вступ
+application_channels = {}
 
 def load_invite_data():
     try:
@@ -56,8 +60,89 @@ def save_welcome_data():
     with open('welcome_messages.json', 'w') as f:
         json.dump(welcome_messages, f)
 
+def load_application_data():
+    try:
+        with open('application_channels.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_application_data():
+    with open('application_channels.json', 'w') as f:
+        json.dump(application_channels, f)
+
 invite_roles = load_invite_data()
 welcome_messages = load_welcome_data()
+application_channels = load_application_data()
+
+# Клас для кнопок обробки заявки
+class ApplicationButtons(ui.View):
+    def __init__(self, applicant_id: int, log_channel_id: int):
+        super().__init__(timeout=None)
+        self.applicant_id = applicant_id
+        self.log_channel_id = log_channel_id
+    
+    @ui.button(label="✅ Підтвердити", style=discord.ButtonStyle.green, custom_id="approve_application")
+    async def approve(self, interaction: discord.Interaction, button: ui.Button):
+        guild = interaction.guild
+        applicant = guild.get_member(self.applicant_id)
+        
+        if not applicant:
+            await interaction.response.send_message("❌ Користувач не знайдений", ephemeral=True)
+            return
+        
+        # Видаляємо повідомлення з кнопками
+        await interaction.message.delete()
+        
+        # Створюємо лог у вказаному каналі
+        log_channel = guild.get_channel(self.log_channel_id)
+        if log_channel:
+            kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+            embed = discord.Embed(
+                title="✅ Заявку підтверджено",
+                description=f"Користувач {applicant.mention} був прийнятий на сервер",
+                color=discord.Color.green(),
+                timestamp=kyiv_time
+            )
+            embed.add_field(name="Підтвердив", value=interaction.user.mention)
+            embed.set_footer(text=f"ID: {applicant.id}")
+            await log_channel.send(embed=embed)
+        
+        await interaction.response.send_message(f"✅ Заявку користувача {applicant.mention} підтверджено", ephemeral=True)
+    
+    @ui.button(label="❌ Відхилити", style=discord.ButtonStyle.red, custom_id="reject_application")
+    async def reject(self, interaction: discord.Interaction, button: ui.Button):
+        guild = interaction.guild
+        applicant = guild.get_member(self.applicant_id)
+        
+        if not applicant:
+            await interaction.response.send_message("❌ Користувач не знайдений", ephemeral=True)
+            return
+        
+        # Видаляємо повідомлення з кнопками
+        await interaction.message.delete()
+        
+        # Створюємо лог у вказаному каналі
+        log_channel = guild.get_channel(self.log_channel_id)
+        if log_channel:
+            kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+            embed = discord.Embed(
+                title="❌ Заявку відхилено",
+                description=f"Користувач {applicant.mention} був відхилений від сервера",
+                color=discord.Color.red(),
+                timestamp=kyiv_time
+            )
+            embed.add_field(name="Відхилив", value=interaction.user.mention)
+            embed.set_footer(text=f"ID: {applicant.id}")
+            await log_channel.send(embed=embed)
+        
+        try:
+            await applicant.kick(reason=f"Заявку відхилив {interaction.user}")
+            await interaction.response.send_message(f"❌ Заявку користувача {applicant.mention} відхилено та його вигнано", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"❌ Не вдалося вигнати користувача {applicant.mention} (недостатньо прав)", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 async def get_wg_api_data(endpoint: str, params: dict) -> Optional[dict]:
     """Функція для взаємодії з Wargaming API"""
@@ -153,6 +238,38 @@ async def on_member_join(member):
     if member.bot:
         return
     
+    # Перевіряємо, чи є канал для заявок для цього сервера
+    if str(member.guild.id) in application_channels:
+        channel_id = application_channels[str(member.guild.id)]["channel_id"]
+        log_channel_id = application_channels[str(member.guild.id)].get("log_channel_id", channel_id)
+        channel = member.guild.get_channel(channel_id)
+        
+        if channel:
+            kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+            
+            # Створюємо embed з інформацією про користувача
+            embed = discord.Embed(
+                title="📝 Нова заявка на вступ",
+                description=f"Користувач {member.mention} хоче приєднатися до сервера",
+                color=discord.Color.orange(),
+                timestamp=kyiv_time
+            )
+            
+            embed.add_field(name="Ім'я", value=f"{member.display_name}", inline=True)
+            embed.add_field(name="ID", value=f"{member.id}", inline=True)
+            embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
+            
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text=f"{member.guild.name} | Заявка подана: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}")
+            
+            # Відправляємо повідомлення з кнопками
+            view = ApplicationButtons(applicant_id=member.id, log_channel_id=log_channel_id)
+            await channel.send(embed=embed, view=view)
+            
+            # Не продовжуємо обробку привітання, оскільки це заявка
+            return
+    
+    # Якщо немає системи заявок, продовжуємо звичайну обробку
     guild = member.guild
     assigned_role = None
     
@@ -253,27 +370,6 @@ async def on_invite_create(invite):
 @bot.event
 async def on_invite_delete(invite):
     await update_invite_cache(invite.guild)
-
-@bot.event
-async def on_ready():
-    print(f'Бот {bot.user} онлайн!')
-    
-    # Встановлюємо київський час для логування
-    kyiv_tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(kyiv_tz)
-    print(f"Поточний час (Київ): {now}")
-    
-    for guild in bot.guilds:
-        await update_invite_cache(guild)
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f"Синхронізовано {len(synced)} команд")
-    except Exception as e:
-        print(f"Помилка синхронізації: {e}")
-    
-    check_voice_activity.start()
-    update_voice_activity.start()
 
 # ========== КОМАНДИ ==========
 
@@ -529,6 +625,74 @@ async def disable_welcome(interaction: discord.Interaction):
         "✅ Привітальні повідомлення вимкнено",
         ephemeral=True
     )
+
+# ========== КОМАНДИ ДЛЯ ЗАЯВОК ==========
+
+@bot.tree.command(name="setup_applications", description="Налаштувати канал для обробки заявок на вступ")
+@app_commands.describe(
+    channel="Канал для заявок",
+    log_channel="Канал для логування (необов'язково)"
+)
+async def setup_applications(interaction: discord.Interaction, 
+                           channel: discord.TextChannel,
+                           log_channel: Optional[discord.TextChannel] = None):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    application_channels[str(interaction.guild.id)] = {
+        "channel_id": channel.id,
+        "log_channel_id": log_channel.id if log_channel else channel.id
+    }
+    save_application_data()
+    
+    description = f"✅ Канал для заявок налаштовано: {channel.mention}"
+    if log_channel:
+        description += f"\n📝 Канал для логування: {log_channel.mention}"
+    else:
+        description += "\n📝 Логування також буде у цьому каналі"
+    
+    await interaction.response.send_message(
+        description + "\n\nТепер при вході нового учасника буде надіслано заявку з кнопками для підтвердження/відхилення.",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="disable_applications", description="Вимкнути систему заявок на вступ")
+async def disable_applications(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if str(interaction.guild.id) in application_channels:
+        application_channels.pop(str(interaction.guild.id))
+        save_application_data()
+    
+    await interaction.response.send_message(
+        "✅ Систему заявок на вступ вимкнено. Нові користувачі будуть прийматися автоматично.",
+        ephemeral=True
+    )
+
+@bot.event
+async def on_ready():
+    print(f'Бот {bot.user} онлайн!')
+    
+    # Додаємо персистентні view для кнопок
+    bot.add_view(ApplicationButtons(applicant_id=0, log_channel_id=0))  # Параметри не мають значення, важливі лише custom_id
+    
+    # Встановлюємо київський час для логування
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Поточний час (Київ): {now}")
+    
+    for guild in bot.guilds:
+        await update_invite_cache(guild)
+    
+    try:
+        synced = await bot.tree.sync()
+        print(f"Синхронізовано {len(synced)} команд")
+    except Exception as e:
+        print(f"Помилка синхронізації: {e}")
+    
+    check_voice_activity.start()
+    update_voice_activity.start()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
