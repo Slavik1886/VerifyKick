@@ -1,5 +1,5 @@
 import discord
-from discord import app_commands, ui
+from discord import app_commands
 from discord.ext import commands, tasks
 import os
 from datetime import datetime, timedelta
@@ -8,7 +8,7 @@ from collections import defaultdict
 import json
 import random
 import aiohttp
-from typing import Optional, Literal
+from typing import Optional
 import pytz
 
 intents = discord.Intents.default()
@@ -17,191 +17,523 @@ intents.guilds = True
 intents.message_content = True
 intents.voice_states = True
 intents.invites = True
-intents.messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Налаштування
-application_settings = {}  # Зберігає канал для заявок
-pending_applications = {}  # Тимчасовий кеш заявок (user_id: guild_id)
+# Системи відстеження
+voice_time_tracker = {}
+tracked_channels = {}
+warning_sent = set()
+voice_activity = defaultdict(timedelta)
+last_activity_update = datetime.utcnow()
 
-def load_application_settings():
+# Система ролей за запрошеннями
+invite_roles = {}
+invite_cache = {}
+
+# Система привітальних повідомлень
+welcome_messages = {}
+
+def load_invite_data():
     try:
-        with open('application_settings.json', 'r') as f:
+        with open('invite_roles.json', 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-def save_application_settings():
-    with open('application_settings.json', 'w') as f:
-        json.dump(application_settings, f)
+def save_invite_data():
+    with open('invite_roles.json', 'w') as f:
+        json.dump(invite_roles, f)
 
-application_settings = load_application_settings()
+def load_welcome_data():
+    try:
+        with open('welcome_messages.json', 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
-# Кнопки для модерації заявок
-class ApplicationReviewView(ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=None)
-        self.user_id = user_id
+def save_welcome_data():
+    with open('welcome_messages.json', 'w') as f:
+        json.dump(welcome_messages, f)
 
-    @ui.button(label="✅ Прийняти", style=discord.ButtonStyle.green, custom_id="accept_application")
-    async def accept(self, interaction: discord.Interaction, button: ui.Button):
-        guild = interaction.guild
+invite_roles = load_invite_data()
+welcome_messages = load_welcome_data()
+
+async def get_wg_api_data(endpoint: str, params: dict) -> Optional[dict]:
+    """Функція для взаємодії з Wargaming API"""
+    params['application_id'] = WG_API_KEY
+    async with aiohttp.ClientSession() as session:
         try:
-            # Знаходимо користувача, який подав заявку
-            member = await guild.fetch_member(self.user_id)
-            
-            # Видаляємо повідомлення з кнопками
-            await interaction.message.delete()
-            
-            # Відправляємо підтвердження
-            await interaction.response.send_message(
-                f"✅ Заявку користувача {member.mention} прийнято!",
-                ephemeral=True
-            )
-            
-            # Логуємо дію
-            log_channel_id = application_settings.get(str(guild.id), {}).get("log_channel")
-            if log_channel_id:
-                log_channel = guild.get_channel(log_channel_id)
-                if log_channel:
-                    embed = discord.Embed(
-                        title="✅ Заявку прийнято",
-                        description=f"Користувач {member.mention} був прийнятий на сервер",
-                        color=discord.Color.green()
-                    )
-                    embed.add_field(name="Модератор", value=interaction.user.mention)
-                    await log_channel.send(embed=embed)
-            
-        except discord.NotFound:
-            await interaction.response.send_message(
-                "❌ Користувач не знайдений. Можливо, він покинув сервер.",
-                ephemeral=True
-            )
+            async with session.get(f"{WG_API_URL}{endpoint}", params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('data') if 'data' in data else data
+                print(f"Помилка API: {resp.status} - {await resp.text()}")
+        except Exception as e:
+            print(f"Помилка запиту до API: {e}")
+    return None
 
-    @ui.button(label="❌ Відхилити", style=discord.ButtonStyle.red, custom_id="reject_application")
-    async def reject(self, interaction: discord.Interaction, button: ui.Button):
-        guild = interaction.guild
-        try:
-            # Знаходимо користувача
-            member = await guild.fetch_member(self.user_id)
-            
-            # Видаляємо повідомлення з кнопками
-            await interaction.message.delete()
-            
-            # Виганяємо користувача
-            await member.kick(reason=f"Заявку відхилено модератором {interaction.user}")
-            
-            # Підтвердження
-            await interaction.response.send_message(
-                f"❌ Заявку користувача {member.mention} відхилено та його вигнано.",
-                ephemeral=True
-            )
-            
-            # Логування
-            log_channel_id = application_settings.get(str(guild.id), {}).get("log_channel")
-            if log_channel_id:
-                log_channel = guild.get_channel(log_channel_id)
-                if log_channel:
-                    embed = discord.Embed(
-                        title="❌ Заявку відхилено",
-                        description=f"Користувач {member.mention} був відхилений",
-                        color=discord.Color.red()
-                    )
-                    embed.add_field(name="Модератор", value=interaction.user.mention)
-                    await log_channel.send(embed=embed)
-                    
-        except discord.NotFound:
-            await interaction.response.send_message(
-                "❌ Користувач не знайдений. Можливо, він вже покинув сервер.",
-                ephemeral=True
-            )
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "❌ У бота недостатньо прав для вигнання користувача.",
-                ephemeral=True
-            )
+async def update_invite_cache(guild):
+    """Оновлюємо кеш запрошень для сервера"""
+    try:
+        invites = await guild.invites()
+        invite_cache[guild.id] = {invite.code: invite.uses for invite in invites}
+    except discord.Forbidden:
+        print(f"Немає дозволу на перегляд запрошень для сервера {guild.name}")
+    except Exception as e:
+        print(f"Помилка оновлення кешу запрошень: {e}")
 
-# Команда для налаштування каналу заявок
-@bot.tree.command(name="setup_application_channel", description="Налаштувати канал для модерації заявок")
-@app_commands.describe(
-    channel="Канал, куди будуть надходити заявки",
-    log_channel="Канал для логування (необов'язково)"
-)
-async def setup_application_channel(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    log_channel: Optional[discord.TextChannel] = None
-):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message(
-            "❌ Потрібні права адміністратора!",
-            ephemeral=True
-        )
+async def delete_after(message, minutes):
+    if minutes <= 0: return
+    await asyncio.sleep(minutes * 60)
+    try: await message.delete()
+    except: pass
+
+@tasks.loop(minutes=1)
+async def update_voice_activity():
+    global last_activity_update
+    now = datetime.utcnow()
+    time_elapsed = now - last_activity_update
+    last_activity_update = now
     
-    # Зберігаємо налаштування
-    application_settings[str(interaction.guild.id)] = {
-        "channel_id": channel.id,
-        "log_channel": log_channel.id if log_channel else None
-    }
-    save_application_settings()
-    
-    await interaction.response.send_message(
-        f"✅ Канал для заявок налаштовано: {channel.mention}\n"
-        f"📝 Канал для логування: {log_channel.mention if log_channel else 'не вказано'}",
-        ephemeral=True
-    )
+    for guild in bot.guilds:
+        for voice_channel in guild.voice_channels:
+            for member in voice_channel.members:
+                if not member.bot:
+                    voice_activity[member.id] += time_elapsed
 
-# Обробник події "очікує верифікації"
+@tasks.loop(minutes=1)
+async def check_voice_activity():
+    current_time = datetime.utcnow()
+    for guild_id, data in tracked_channels.items():
+        guild = bot.get_guild(guild_id)
+        if not guild: continue
+            
+        voice_channel = guild.get_channel(data["voice_channel"])
+        log_channel = guild.get_channel(data["log_channel"])
+        if not voice_channel or not log_channel: continue
+            
+        for member in voice_channel.members:
+            if member.bot: continue
+                
+            member_key = f"{guild_id}_{member.id}"
+            
+            if member_key not in voice_time_tracker:
+                voice_time_tracker[member_key] = current_time
+                warning_sent.discard(member_key)
+                continue
+                
+            time_in_channel = current_time - voice_time_tracker[member_key]
+            
+            if time_in_channel > timedelta(minutes=10) and member_key not in warning_sent:
+                try:
+                    await member.send("⚠️ Ви в каналі для неактивних користувачів вже 10+ хвилин. ✅ Будьте активні, або Ви будете відєднані!")
+                    warning_sent.add(member_key)
+                except: pass
+            
+            if time_in_channel > timedelta(minutes=15):
+                try:
+                    await member.move_to(None)
+                    msg = await log_channel.send(f"🔴 {member.mention} відключено за неактивність на сервері")
+                    bot.loop.create_task(delete_after(msg, data["delete_after"]))
+                    del voice_time_tracker[member_key]
+                    warning_sent.discard(member_key)
+                except: pass
+
 @bot.event
-async def on_member_join(member: discord.Member):
+async def on_voice_state_update(member, before, after):
+    if before.channel and before.channel.id in [data["voice_channel"] for data in tracked_channels.values()]:
+        member_key = f"{member.guild.id}_{member.id}"
+        if member_key in voice_time_tracker:
+            del voice_time_tracker[member_key]
+            warning_sent.discard(member_key)
+
+@bot.event
+async def on_member_join(member):
     if member.bot:
         return
     
-    guild_id = str(member.guild.id)
+    guild = member.guild
+    assigned_role = None
     
-    # Перевіряємо, чи налаштовано систему заявок для цього сервера
-    if guild_id not in application_settings:
-        return  # Якщо ні - користувач проходить автоматично
+    try:
+        current_invites = await guild.invites()
+        used_invite = None
+        for invite in current_invites:
+            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+            if invite.uses > cached_uses:
+                used_invite = invite
+                break
+        
+        if used_invite:
+            await update_invite_cache(guild)
+            guild_roles = invite_roles.get(str(guild.id), {})
+            role_id = guild_roles.get(used_invite.code)
+            
+            if role_id:
+                role = guild.get_role(role_id)
+                if role:
+                    try:
+                        await member.add_roles(role)
+                        assigned_role = role
+                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
+                    except discord.Forbidden:
+                        print(f"Немає дозволу надавати роль {role.name}")
+                    except Exception as e:
+                        print(f"Помилка надання ролі: {e}")
+    except Exception as e:
+        print(f"Помилка обробки нового учасника: {e}")
     
-    # Отримуємо канал для заявок
-    channel_id = application_settings[guild_id]["channel_id"]
-    channel = member.guild.get_channel(channel_id)
-    if not channel:
-        return
-    
-    # Створюємо embed з інформацією про користувача
-    embed = discord.Embed(
-        title="📝 Нова заявка на вступ",
-        description=f"Користувач {member.mention} хоче приєднатися до сервера.",
-        color=discord.Color.orange()
-    )
-    embed.add_field(name="Ім'я", value=member.display_name, inline=True)
-    embed.add_field(name="ID", value=member.id, inline=True)
-    embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
-    embed.set_thumbnail(url=member.display_avatar.url)
-    
-    # Відправляємо повідомлення з кнопками
-    view = ApplicationReviewView(user_id=member.id)
-    await channel.send(embed=embed, view=view)
-    
-    # Додаємо до тимчасового кешу
-    pending_applications[member.id] = guild_id
+    # Обробка привітальних повідомлень
+    if str(guild.id) in welcome_messages:
+        channel_id = welcome_messages[str(guild.id)]["channel_id"]
+        channel = guild.get_channel(channel_id)
+        if channel:
+            try:
+                # Отримуємо інформацію про того, хто запросив
+                inviter = "Невідомо"
+                if used_invite and used_invite.inviter:
+                    inviter = used_invite.inviter.mention
+                
+                # Отримуємо інформацію про призначену роль
+                role_info = "Не призначено"
+                if assigned_role:
+                    role_info = assigned_role.mention
+                
+                # Створюємо embed
+                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+                embed = discord.Embed(
+                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
+                    color=discord.Color.green(),
+                    timestamp=kyiv_time
+                )
+                
+                # Додаємо аватар справа
+                embed.set_thumbnail(url=member.display_avatar.url)
+                
+                # Основна інформація
+                embed.add_field(
+                    name="Користувач",
+                    value=f"{member.mention}\n{member.display_name}",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="Запросив",
+                    value=inviter,
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="Призначена роль",
+                    value=role_info,
+                    inline=False
+                )
+                
+                embed.add_field(
+                    name="Дата реєстрації в Discord",
+                    value=member.created_at.strftime("%d.%m.%Y"),
+                    inline=False
+                )
+                
+                # Підвал з назвою сервера
+                embed.set_footer(
+                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
+                    icon_url=guild.icon.url if guild.icon else None
+                )
+                
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Помилка при відправці привітання: {e}")
 
-# Обробник події "прийнято/відхилено"
 @bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    # Якщо користувач пройшов верифікацію (отримав роль)
-    if len(before.roles) < len(after.roles):
-        guild_id = str(after.guild.id)
-        if after.id in pending_applications and pending_applications[after.id] == guild_id:
-            pending_applications.pop(after.id)  # Видаляємо з кешу
+async def on_invite_create(invite):
+    await update_invite_cache(invite.guild)
+
+@bot.event
+async def on_invite_delete(invite):
+    await update_invite_cache(invite.guild)
 
 @bot.event
 async def on_ready():
-    print(f"Бот {bot.user} готовий до роботи!")
-    await bot.tree.sync()
-    bot.add_view(ApplicationReviewView(user_id=0))  # Для персистентних кнопок
+    print(f'Бот {bot.user} онлайн!')
+    
+    # Встановлюємо київський час для логування
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Поточний час (Київ): {now}")
+    
+    for guild in bot.guilds:
+        await update_invite_cache(guild)
+    
+    try:
+        synced = await bot.tree.sync()
+        print(f"Синхронізовано {len(synced)} команд")
+    except Exception as e:
+        print(f"Помилка синхронізації: {e}")
+    
+    check_voice_activity.start()
+    update_voice_activity.start()
+
+# ========== КОМАНДИ ==========
+
+@bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
+@app_commands.describe(
+    invite="Код запрошення (без discord.gg/)",
+    role="Роль для надання"
+)
+async def assign_role_to_invite(interaction: discord.Interaction, invite: str, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    try:
+        invites = await interaction.guild.invites()
+        if not any(inv.code == invite for inv in invites):
+            return await interaction.response.send_message("❌ Запрошення не знайдено", ephemeral=True)
+        
+        guild_id = str(interaction.guild.id)
+        if guild_id not in invite_roles:
+            invite_roles[guild_id] = {}
+        
+        invite_roles[guild_id][invite] = role.id
+        save_invite_data()
+        await update_invite_cache(interaction.guild)
+        
+        await interaction.response.send_message(
+            f"✅ Користувачі, які прийдуть через запрошення `{invite}`, отримуватимуть роль {role.mention}",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Помилка: {str(e)}",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
+@app_commands.describe(
+    voice_channel="Голосовий канал для відстеження",
+    log_channel="Канал для повідомлень",
+    delete_after="Через скільки хвилин видаляти повідомлення"
+)
+async def track_voice(interaction: discord.Interaction, 
+                     voice_channel: discord.VoiceChannel, 
+                     log_channel: discord.TextChannel,
+                     delete_after: int = 5):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    
+    tracked_channels[interaction.guild_id] = {
+        "voice_channel": voice_channel.id,
+        "log_channel": log_channel.id,
+        "delete_after": delete_after
+    }
+    
+    await interaction.response.send_message(
+        f"🔊 Відстежування {voice_channel.mention} активовано\n"
+        f"📝 Логування у {log_channel.mention}\n"
+        f"⏳ Автовидалення через {delete_after} хв",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="remove_default_only", description="Видаляє користувачів тільки з @everyone")
+async def remove_default_only(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    deleted = 0
+    
+    for member in interaction.guild.members:
+        if not member.bot and len(member.roles) == 1:
+            try:
+                await member.kick(reason="Тільки @everyone")
+                deleted += 1
+            except: pass
+    
+    await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
+
+@bot.tree.command(name="remove_by_role", description="Видаляє користувачів з роллю")
+@app_commands.describe(role="Роль для видалення")
+async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    
+    if role == interaction.guild.default_role:
+        await interaction.response.send_message("Не можна видаляти всіх", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    deleted = 0
+    
+    for member in role.members:
+        if not member.bot:
+            try:
+                await member.kick(reason=f"Видалення ролі {role.name}")
+                deleted += 1
+            except: pass
+    
+    await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
+
+@bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
+async def list_no_roles(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
+               if not m.bot and len(m.roles) == 1]
+    
+    if not members:
+        await interaction.followup.send("Немає таких користувачів", ephemeral=True)
+        return
+    
+    chunks = [members[i:i+20] for i in range(0, len(members), 20)]
+    for i, chunk in enumerate(chunks):
+        msg = f"Користувачі без ролей (частина {i+1}):\n" + "\n".join(chunk)
+        await interaction.followup.send(msg, ephemeral=True)
+
+@bot.tree.command(name="show_role_users", description="Показати користувачів з роллю")
+@app_commands.describe(role="Роль для перегляду")
+async def show_role_users(interaction: discord.Interaction, role: discord.Role):
+    await interaction.response.defer(ephemeral=True)
+    members = [f"{m.mention} ({m.display_name})" for m in role.members if not m.bot]
+    
+    if not members:
+        await interaction.followup.send(f"Немає користувачів з роллю {role.name}", ephemeral=True)
+        return
+    
+    chunks = [members[i:i+15] for i in range(0, len(members), 15)]
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Користувачі з роллю {role.name} ({len(members)})",
+            description="\n".join(chunk),
+            color=role.color
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
+@app_commands.describe(
+    channel="Текстовий канал для надсилання",
+    title="Заголовок повідомлення",
+    description="Основний текст повідомлення (використовуйте \\n для нового рядка)",
+    color="Колір рамки (оберіть зі списку)",
+    thumbnail="Зображення для колонтитулу (необов'язково)",
+    image="Зображення для прикріплення (необов'язково)"
+)
+@app_commands.choices(color=[
+    app_commands.Choice(name="🔵 Синій", value="blue"),
+    app_commands.Choice(name="🟢 Зелений", value="green"),
+    app_commands.Choice(name="🔴 Червоний", value="red"),
+    app_commands.Choice(name="🟡 Жовтий", value="yellow"),
+    app_commands.Choice(name="🟣 Фіолетовий", value="purple"),
+    app_commands.Choice(name="🟠 Помаранчевий", value="orange"),
+    app_commands.Choice(name="🌈 Випадковий", value="random")
+])
+async def send_embed(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: app_commands.Choice[str],
+    thumbnail: discord.Attachment = None,
+    image: discord.Attachment = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+    
+    # Визначаємо колір
+    color_map = {
+        "blue": discord.Color.blue(),
+        "green": discord.Color.green(),
+        "red": discord.Color.red(),
+        "yellow": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange(),
+        "random": discord.Color.random()
+    }
+    selected_color = color_map.get(color.value, discord.Color.blue())
+    
+    # Створюємо embed
+    embed = discord.Embed(
+        title=title,
+        description=description.replace('\\n', '\n'),
+        color=selected_color,
+        timestamp=datetime.utcnow()
+    )
+    
+    # Додаємо колонтитул
+    if thumbnail and thumbnail.content_type.startswith('image/'):
+        embed.set_thumbnail(url=thumbnail.url)
+    
+    # Додаємо основне зображення
+    if image and image.content_type.startswith('image/'):
+        embed.set_image(url=image.url)
+   
+    # Відправляємо
+    try:
+        await channel.send(embed=embed)
+        await interaction.response.send_message(
+            f"✅ Повідомлення успішно надіслано до {channel.mention}",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Сталася помилка: {str(e)}",
+            ephemeral=True
+        )
+
+@bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
+@app_commands.describe(
+    channel="Канал для привітальних повідомлень"
+)
+async def setup_welcome(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    welcome_messages[str(interaction.guild.id)] = {
+        "channel_id": channel.id
+    }
+    save_welcome_data()
+    
+    await interaction.response.send_message(
+        f"✅ Привітальні повідомлення будуть надсилатися у канал {channel.mention}\n"
+        f"Тепер при вході нового учасника буде показано:\n"
+        f"- Аватар користувача\n"
+        f"- Ім'я та мітку\n"
+        f"- Хто запросив\n"
+        f"- Призначену роль\n"
+        f"- Дату реєстрації в Discord\n"
+        f"- Час приєднання до сервера",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="disable_welcome", description="Вимкнути привітальні повідомлення")
+async def disable_welcome(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    
+    if str(interaction.guild.id) in welcome_messages:
+        welcome_messages.pop(str(interaction.guild.id))
+        save_welcome_data()
+    
+    await interaction.response.send_message(
+        "✅ Привітальні повідомлення вимкнено",
+        ephemeral=True
+    )
 
 TOKEN = os.getenv('DISCORD_TOKEN')
-bot.run(TOKEN)
+if not TOKEN:
+    raise ValueError("Відсутній токен Discord")
+
+if __name__ == '__main__':
+    print("Запуск бота...")
+    bot.run(TOKEN)
