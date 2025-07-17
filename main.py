@@ -377,12 +377,62 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+class SendEmbedModal(Modal, title="Створити Embed-повідомлення"):
+    def __init__(self, channel_id: int):
+        super().__init__()
+        self.channel_id = channel_id
+        self.title_input = TextInput(label="Заголовок", required=False, max_length=256)
+        self.description_input = TextInput(label="Опис (кожен абзац з нового рядка)", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+        self.color_input = TextInput(label="Колір (HEX, напр. #00ff00 або залиште порожнім)", required=False, max_length=7)
+        self.fields_input = TextInput(label="Поля (кожен рядок: Назва: Значення)", style=discord.TextStyle.paragraph, required=False, max_length=1000)
+        self.image_input = TextInput(label="Зображення (URL, не обов'язково)", required=False, max_length=500)
+        self.thumbnail_input = TextInput(label="Thumbnail (URL, не обов'язково)", required=False, max_length=500)
+        self.footer_input = TextInput(label="Footer (не обов'язково)", required=False, max_length=200)
+        self.add_item(self.title_input)
+        self.add_item(self.description_input)
+        self.add_item(self.color_input)
+        self.add_item(self.fields_input)
+        self.add_item(self.image_input)
+        self.add_item(self.thumbnail_input)
+        self.add_item(self.footer_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        channel = interaction.client.get_channel(self.channel_id)
+        color = discord.Color.blue()
+        if self.color_input.value:
+            try:
+                color = discord.Color(int(self.color_input.value.lstrip('#'), 16))
+            except:
+                pass
+        embed = discord.Embed(
+            title=self.title_input.value or None,
+            description=self.description_input.value,
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        if self.thumbnail_input.value:
+            embed.set_thumbnail(url=self.thumbnail_input.value)
+        if self.image_input.value:
+            embed.set_image(url=self.image_input.value)
+        if self.footer_input.value:
+            embed.set_footer(text=self.footer_input.value)
+        if self.fields_input.value:
+            for line in self.fields_input.value.splitlines():
+                if ':' in line:
+                    name, value = line.split(':', 1)
+                    embed.add_field(name=name.strip(), value=value.strip(), inline=False)
+        try:
+            await channel.send(embed=embed)
+            await interaction.response.send_message(f"✅ Embed-повідомлення надіслано у {channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+
 @bot.tree.command(name="send_embed_modal", description="Створити embed-повідомлення через форму")
 @app_commands.describe(channel="Канал для надсилання")
 async def send_embed_modal(interaction: discord.Interaction, channel: discord.TextChannel):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
-    await interaction.response.send_modal(SendEmbedModal(channel))
+    await interaction.response.send_modal(SendEmbedModal(channel.id))
 
 @bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
 @app_commands.describe(
