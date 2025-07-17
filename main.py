@@ -549,19 +549,8 @@ async def purge(interaction: discord.Interaction, amount: int):
     await interaction.response.send_message(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
 
 @bot.tree.command(name="mute", description="Видати мут користувачу")
-@app_commands.describe(
-    member="Користувач для мюту",
-    reason="Причина",
-    minutes="На скільки хвилин (0 = безстроково)",
-    log_channel="Канал для логування"
-)
-async def mute(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    reason: str = "",
-    minutes: int = 0,
-    log_channel: discord.TextChannel = None
-):
+@app_commands.describe(member="Користувач тимчасово заблокований", reason="Причина", minutes="На скільки хвилин (0 = безстроково)")
+async def mute(interaction: discord.Interaction, member: discord.Member, reason: str = "", minutes: int = 0):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
     try:
@@ -573,18 +562,14 @@ async def mute(
             f"🔇 {member.mention} тимчасово заблоковано {'на ' + str(minutes) + ' хв.' if minutes else 'безстроково'}",
             ephemeral=True
         )
-        # Логування у вибраний канал
-        if log_channel:
-            embed = discord.Embed(
-                title="🔇 Користувача тимчасово заблоковано",
-                color=discord.Color.orange(),
-                timestamp=datetime.utcnow()
-            )
-            embed.add_field(name="Користувач", value=member.mention, inline=True)
-            embed.add_field(name="Модератор", value=interaction.user.mention, inline=True)
-            embed.add_field(name="Тривалість", value=f"{minutes} хв." if minutes else "Безстроково", inline=True)
-            embed.add_field(name="Причина", value=reason or "Не вказано", inline=False)
-            await log_channel.send(embed=embed)
+        # Надсилання приватного повідомлення користувачу
+        try:
+            msg = f"Вас тимчасово заблоковано на сервері **{interaction.guild.name}** {'на ' + str(minutes) + ' хв.' if minutes else 'безстроково'}."
+            if reason:
+                msg += f"\nПричина: {reason}"
+            await member.send(msg)
+        except Exception:
+            pass  # Якщо не вдалося надіслати DM, ігноруємо
     except Exception as e:
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
