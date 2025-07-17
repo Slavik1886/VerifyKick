@@ -745,11 +745,16 @@ async def clear_reactions(interaction: discord.Interaction, message_id: int):
 async def list_mutes(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
+    import pytz
+    kyiv_tz = pytz.timezone('Europe/Kiev')
     muted = [m for m in interaction.guild.members if m.timed_out_until and m.timed_out_until > datetime.now(timezone.utc)]
     if not muted:
         await interaction.response.send_message("Немає зам'ючених користувачів", ephemeral=True)
         return
-    msg = "\n".join([f"{m.mention} до {m.timed_out_until.strftime('%d.%m.%Y %H:%M')}" for m in muted])
+    msg = "\n".join([
+        f"{m.mention} до {m.timed_out_until.astimezone(kyiv_tz).strftime('%d.%m.%Y %H:%M')} (Київ)"
+        for m in muted
+    ])
     await interaction.response.send_message(f"Зам'ючені користувачі:\n{msg}", ephemeral=True)
 
 @bot.tree.command(name="list_bans", description="Показати забанених користувачів")
