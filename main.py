@@ -386,15 +386,11 @@ class SendEmbedModal(Modal, title="Створити Embed-повідомленн
         self.color_input = TextInput(label="Колір (HEX, напр. #00ff00 або залиште порожнім)", required=False, max_length=7)
         self.fields_input = TextInput(label="Поля (кожен рядок: Назва: Значення)", style=discord.TextStyle.paragraph, required=False, max_length=1000)
         self.image_input = TextInput(label="Зображення (URL, не обов'язково)", required=False, max_length=500)
-        self.thumbnail_input = TextInput(label="Thumbnail (URL, не обов'язково)", required=False, max_length=500)
-        self.footer_input = TextInput(label="Footer (не обов'язково)", required=False, max_length=200)
         self.add_item(self.title_input)
         self.add_item(self.description_input)
         self.add_item(self.color_input)
         self.add_item(self.fields_input)
         self.add_item(self.image_input)
-        self.add_item(self.thumbnail_input)
-        self.add_item(self.footer_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         channel = interaction.client.get_channel(self.channel_id)
@@ -410,12 +406,8 @@ class SendEmbedModal(Modal, title="Створити Embed-повідомленн
             color=color,
             timestamp=datetime.utcnow()
         )
-        if self.thumbnail_input.value:
-            embed.set_thumbnail(url=self.thumbnail_input.value)
         if self.image_input.value:
             embed.set_image(url=self.image_input.value)
-        if self.footer_input.value:
-            embed.set_footer(text=self.footer_input.value)
         if self.fields_input.value:
             for line in self.fields_input.value.splitlines():
                 if ':' in line:
