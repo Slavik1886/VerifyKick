@@ -549,22 +549,45 @@ async def purge(interaction: discord.Interaction, amount: int):
     await interaction.response.send_message(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
 
 @bot.tree.command(name="mute", description="Видати мут користувачу")
-@app_commands.describe(member="Користувач тимчасово заблокований", reason="Причина", minutes="На скільки хвилин (0 = безстроково)")
-async def mute(interaction: discord.Interaction, member: discord.Member, reason: str = "", minutes: int = 0):
+@app_commands.describe(
+    member="Користувач тимчасово заблокований",
+    reason="Причина",
+    days="На скільки днів (0 = не враховувати)",
+    hours="На скільки годин (0 = не враховувати)",
+    minutes="На скільки хвилин (0 = не враховувати)"
+)
+async def mute(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "",
+    days: int = 0,
+    hours: int = 0,
+    minutes: int = 0
+):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
     try:
         until = None
-        if minutes > 0:
-            until = discord.utils.utcnow() + timedelta(minutes=minutes)
+        total_delta = timedelta(days=days, hours=hours, minutes=minutes)
+        if total_delta.total_seconds() > 0:
+            until = discord.utils.utcnow() + total_delta
         await member.edit(timed_out_until=until, reason=reason)
+        # Формуємо строку тривалості
+        duration_parts = []
+        if days:
+            duration_parts.append(f"{days} дн.")
+        if hours:
+            duration_parts.append(f"{hours} год.")
+        if minutes:
+            duration_parts.append(f"{minutes} хв.")
+        duration_str = " ".join(duration_parts) if duration_parts else "безстроково"
         await interaction.response.send_message(
-            f"🔇 {member.mention} тимчасово заблоковано {'на ' + str(minutes) + ' хв.' if minutes else 'безстроково'}",
+            f"🔇 {member.mention} тимчасово заблоковано {duration_str}",
             ephemeral=True
         )
         # Надсилання приватного повідомлення користувачу
         try:
-            msg = f"Вас тимчасово заблоковано на сервері **{interaction.guild.name}** {'на ' + str(minutes) + ' хв.' if minutes else 'безстроково'}."
+            msg = f"Вас тимчасово заблоковано на сервері **{interaction.guild.name}** {duration_str}."
             if reason:
                 msg += f"\nПричина: {reason}"
             await member.send(msg)
