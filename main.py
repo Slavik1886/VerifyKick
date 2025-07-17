@@ -480,7 +480,7 @@ async def disable_welcome(interaction: discord.Interaction):
 
 # ========== ЗАЯВКА НА ПРИЄДНАННЯ ==========
 
-MOD_CHANNEL_ID = 1234567890  # <-- Вкажіть ID каналу для модерації заявок
+MOD_CHANNEL_ID = 1318890524643557406  # <-- ID каналу для модерації заявок
 GUILD_INVITE_LINK = "https://discord.gg/yourinvite"  # <-- Вкажіть посилання на запрошення
 
 class JoinRequestModal(Modal, title="Запит на приєднання"):
@@ -557,7 +557,7 @@ async def mute(interaction: discord.Interaction, member: discord.Member, reason:
         until = None
         if minutes > 0:
             until = discord.utils.utcnow() + timedelta(minutes=minutes)
-        await member.edit(timeout=until, reason=reason)
+        await member.edit(timed_out_until=until, reason=reason)
         await interaction.response.send_message(f"🔇 {member.mention} зам'ючено {'на ' + str(minutes) + ' хв.' if minutes else 'безстроково'}", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
@@ -568,7 +568,7 @@ async def unmute(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
     try:
-        await member.edit(timeout=None)
+        await member.edit(timed_out_until=None)
         await interaction.response.send_message(f"🔊 {member.mention} розм'ючено", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
