@@ -568,6 +568,8 @@ async def mute(
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
     BLOCKED_ROLE_ID = 1342610482623811664
     NORMAL_ROLE_ID = 1331255972303470603
+    import pytz
+    kyiv_tz = pytz.timezone('Europe/Kiev')
     try:
         until = None
         total_delta = timedelta(days=days, hours=hours, minutes=minutes)
@@ -597,9 +599,24 @@ async def mute(
         )
         # Надсилання приватного повідомлення користувачу
         try:
-            msg = f"Вас тимчасово заблоковано на сервері **{interaction.guild.name}** {duration_str}."
-            if reason:
-                msg += f"\nПричина: {reason}"
+            # Формуємо повідомлення для користувача
+            moderator = interaction.user.mention
+            server_name = interaction.guild.name
+            if not reason:
+                reason = "Порушення правил користування сервером UADRG"
+            lines = [
+                f"👮‍♂️ *Вас заблокував:* ControlBot",
+                f"📝 *Причина блокування:* {reason}",
+            ]
+            if total_delta.total_seconds() == 0:
+                lines.append(f"⛔ *Акаунт заблоковано без можливості розблокування (назавжди)*")
+            else:
+                lines.append(f"⏳ *Тривалість блокування:* {duration_str}")
+                if until:
+                    kyiv_time = until.astimezone(kyiv_tz)
+                    lines.append(f"📅 *Час розблокування:* {kyiv_time.strftime('%d.%m.%Y %H:%M')} (Київ)")
+            lines.append(f"🌐 *Сервер:* {server_name}")
+            msg = "\n".join(lines)
             await member.send(msg)
         except Exception:
             pass  # Якщо не вдалося надіслати DM, ігноруємо
