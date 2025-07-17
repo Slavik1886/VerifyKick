@@ -566,6 +566,8 @@ async def mute(
 ):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
+    BLOCKED_ROLE_ID = 1342610482623811664
+    NORMAL_ROLE_ID = 1331255972303470603
     try:
         until = None
         total_delta = timedelta(days=days, hours=hours, minutes=minutes)
@@ -581,6 +583,14 @@ async def mute(
         if minutes:
             duration_parts.append(f"{minutes} хв.")
         duration_str = " ".join(duration_parts) if duration_parts else "безстроково"
+        # Якщо безстроково, змінюємо ролі
+        if total_delta.total_seconds() == 0:
+            normal_role = interaction.guild.get_role(NORMAL_ROLE_ID)
+            blocked_role = interaction.guild.get_role(BLOCKED_ROLE_ID)
+            if normal_role and normal_role in member.roles:
+                await member.remove_roles(normal_role, reason="Безстрокове блокування")
+            if blocked_role and blocked_role not in member.roles:
+                await member.add_roles(blocked_role, reason="Безстрокове блокування")
         await interaction.response.send_message(
             f"🔇 {member.mention} тимчасово заблоковано {duration_str}",
             ephemeral=True
@@ -601,8 +611,17 @@ async def mute(
 async def unmute(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
+    BLOCKED_ROLE_ID = 1342610482623811664
+    NORMAL_ROLE_ID = 1331255972303470603
     try:
         await member.edit(timed_out_until=None)
+        # Якщо у користувача є роль блокування, знімаємо її і повертаємо звичайну роль
+        blocked_role = interaction.guild.get_role(BLOCKED_ROLE_ID)
+        normal_role = interaction.guild.get_role(NORMAL_ROLE_ID)
+        if blocked_role and blocked_role in member.roles:
+            await member.remove_roles(blocked_role, reason="Зняття безстрокового блокування")
+        if normal_role and normal_role not in member.roles:
+            await member.add_roles(normal_role, reason="Зняття безстрокового блокування")
         await interaction.response.send_message(f"🔊 {member.mention} розблоковано", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
