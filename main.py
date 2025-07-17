@@ -377,71 +377,12 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
-@app_commands.describe(
-    channel="Текстовий канал для надсилання",
-    title="Заголовок повідомлення",
-    description="Основний текст повідомлення (використовуйте \\n для нового рядка)",
-    color="Колір рамки (оберіть зі списку)",
-    thumbnail="Зображення для колонтитулу (необов'язково)",
-    image="Зображення для прикріплення (необов'язково)"
-)
-@app_commands.choices(color=[
-    app_commands.Choice(name="🔵 Синій", value="blue"),
-    app_commands.Choice(name="🟢 Зелений", value="green"),
-    app_commands.Choice(name="🔴 Червоний", value="red"),
-    app_commands.Choice(name="🟡 Жовтий", value="yellow"),
-    app_commands.Choice(name="🟣 Фіолетовий", value="purple"),
-    app_commands.Choice(name="🟠 Помаранчевий", value="orange"),
-    app_commands.Choice(name="🌈 Випадковий", value="random")
-])
-async def send_embed(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    title: str,
-    description: str,
-    color: app_commands.Choice[str],
-    thumbnail: discord.Attachment = None,
-    image: discord.Attachment = None
-):
+@bot.tree.command(name="send_embed_modal", description="Створити embed-повідомлення через форму")
+@app_commands.describe(channel="Канал для надсилання")
+async def send_embed_modal(interaction: discord.Interaction, channel: discord.TextChannel):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
-    color_map = {
-        "blue": discord.Color.blue(),
-        "green": discord.Color.green(),
-        "red": discord.Color.red(),
-        "yellow": discord.Color.gold(),
-        "purple": discord.Color.purple(),
-        "orange": discord.Color.orange(),
-        "random": discord.Color.random()
-    }
-    selected_color = color_map.get(color.value, discord.Color.blue())
-    embed = discord.Embed(
-        title=title,
-        description=description.replace('\\n', '\n'),
-        color=selected_color,
-        timestamp=datetime.utcnow()
-    )
-    if thumbnail and thumbnail.content_type.startswith('image/'):
-        embed.set_thumbnail(url=thumbnail.url)
-    if image and image.content_type.startswith('image/'):
-        embed.set_image(url=image.url)
-    try:
-        await channel.send(embed=embed)
-        await interaction.response.send_message(
-            f"✅ Повідомлення успішно надіслано до {channel.mention}",
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "❌ Бот не має прав для надсилання повідомлень у цей канал",
-            ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Сталася помилка: {str(e)}",
-            ephemeral=True
-        )
+    await interaction.response.send_modal(SendEmbedModal(channel))
 
 @bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
 @app_commands.describe(
