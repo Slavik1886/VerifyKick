@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 from collections import defaultdict
 import json
@@ -377,54 +377,71 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-class SendEmbedModal(Modal, title="Створити Embed-повідомлення"):
-    def __init__(self, channel_id: int):
-        super().__init__()
-        self.channel_id = channel_id
-        self.title_input = TextInput(label="Заголовок", required=False, max_length=256)
-        self.description_input = TextInput(label="Опис (кожен абзац з нового рядка)", style=discord.TextStyle.paragraph, required=True, max_length=2000)
-        self.color_input = TextInput(label="Колір (HEX, напр. #00ff00 або залиште порожнім)", required=False, max_length=7)
-        self.fields_input = TextInput(label="Поля (кожен рядок: Назва: Значення)", style=discord.TextStyle.paragraph, required=False, max_length=1000)
-        self.image_input = TextInput(label="Зображення (URL, не обов'язково)", required=False, max_length=500)
-        self.add_item(self.title_input)
-        self.add_item(self.description_input)
-        self.add_item(self.color_input)
-        self.add_item(self.fields_input)
-        self.add_item(self.image_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        channel = interaction.client.get_channel(self.channel_id)
-        color = discord.Color.blue()
-        if self.color_input.value:
-            try:
-                color = discord.Color(int(self.color_input.value.lstrip('#'), 16))
-            except:
-                pass
-        embed = discord.Embed(
-            title=self.title_input.value or None,
-            description=self.description_input.value,
-            color=color,
-            timestamp=datetime.utcnow()
-        )
-        if self.image_input.value:
-            embed.set_image(url=self.image_input.value)
-        if self.fields_input.value:
-            for line in self.fields_input.value.splitlines():
-                if ':' in line:
-                    name, value = line.split(':', 1)
-                    embed.add_field(name=name.strip(), value=value.strip(), inline=False)
-        try:
-            await channel.send(embed=embed)
-            await interaction.response.send_message(f"✅ Embed-повідомлення надіслано у {channel.mention}", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
-
-@bot.tree.command(name="send_embed_modal", description="Створити embed-повідомлення через форму")
-@app_commands.describe(channel="Канал для надсилання")
-async def send_embed_modal(interaction: discord.Interaction, channel: discord.TextChannel):
+@bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
+@app_commands.describe(
+    channel="Текстовий канал для надсилання",
+    title="Заголовок повідомлення",
+    description="Основний текст повідомлення (використовуйте \\n для нового рядка)",
+    color="Колір рамки (оберіть зі списку)",
+    thumbnail="Зображення для колонтитулу (необов'язково)",
+    image="Зображення для прикріплення (необов'язково)"
+)
+@app_commands.choices(color=[
+    app_commands.Choice(name="🔵 Синій", value="blue"),
+    app_commands.Choice(name="🟢 Зелений", value="green"),
+    app_commands.Choice(name="🔴 Червоний", value="red"),
+    app_commands.Choice(name="🟡 Жовтий", value="yellow"),
+    app_commands.Choice(name="🟣 Фіолетовий", value="purple"),
+    app_commands.Choice(name="🟠 Помаранчевий", value="orange"),
+    app_commands.Choice(name="🌈 Випадковий", value="random")
+])
+async def send_embed(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: app_commands.Choice[str],
+    thumbnail: discord.Attachment = None,
+    image: discord.Attachment = None
+):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
-    await interaction.response.send_modal(SendEmbedModal(channel.id))
+    color_map = {
+        "blue": discord.Color.blue(),
+        "green": discord.Color.green(),
+        "red": discord.Color.red(),
+        "yellow": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange(),
+        "random": discord.Color.random()
+    }
+    selected_color = color_map.get(color.value, discord.Color.blue())
+    embed = discord.Embed(
+        title=title,
+        description=description.replace('\\n', '\n'),
+        color=selected_color,
+        timestamp=datetime.utcnow()
+    )
+    if thumbnail and thumbnail.content_type.startswith('image/'):
+        embed.set_thumbnail(url=thumbnail.url)
+    if image and image.content_type.startswith('image/'):
+        embed.set_image(url=image.url)
+    try:
+        await channel.send(embed=embed)
+        await interaction.response.send_message(
+            f"✅ Повідомлення успішно надіслано до {channel.mention}",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Бот не має прав для надсилання повідомлень у цей канал",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Сталася помилка: {str(e)}",
+            ephemeral=True
+        )
 
 @bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
 @app_commands.describe(
@@ -654,33 +671,6 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
     except Exception as e:
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
-@bot.tree.command(name="userinfo", description="Показати інформацію про користувача")
-@app_commands.describe(member="Користувач")
-async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    embed = discord.Embed(title=f"Інформація про {member}", color=member.color, timestamp=datetime.utcnow())
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.add_field(name="ID", value=member.id, inline=True)
-    embed.add_field(name="Ім'я", value=member.display_name, inline=True)
-    embed.add_field(name="Згадка", value=member.mention, inline=True)
-    embed.add_field(name="Ролі", value=", ".join([r.mention for r in member.roles if r != member.guild.default_role]), inline=False)
-    embed.add_field(name="Дата приєднання", value=member.joined_at.strftime('%d.%m.%Y %H:%M'), inline=True)
-    embed.add_field(name="Дата реєстрації", value=member.created_at.strftime('%d.%m.%Y %H:%M'), inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="serverinfo", description="Показати інформацію про сервер")
-async def serverinfo(interaction: discord.Interaction):
-    guild = interaction.guild
-    embed = discord.Embed(title=f"Сервер: {guild.name}", color=discord.Color.blue(), timestamp=datetime.utcnow())
-    embed.set_thumbnail(url=guild.icon.url if guild.icon else discord.Embed.Empty)
-    embed.add_field(name="ID", value=guild.id, inline=True)
-    embed.add_field(name="Власник", value=guild.owner.mention, inline=True)
-    embed.add_field(name="Учасників", value=guild.member_count, inline=True)
-    embed.add_field(name="Каналів", value=len(guild.channels), inline=True)
-    embed.add_field(name="Ролей", value=len(guild.roles), inline=True)
-    embed.add_field(name="Створено", value=guild.created_at.strftime('%d.%m.%Y %H:%M'), inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 @bot.tree.command(name="roleinfo", description="Показати інформацію про роль")
 @app_commands.describe(role="Роль")
 async def roleinfo(interaction: discord.Interaction, role: discord.Role):
@@ -755,7 +745,7 @@ async def clear_reactions(interaction: discord.Interaction, message_id: int):
 async def list_mutes(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
-    muted = [m for m in interaction.guild.members if m.timed_out_until and m.timed_out_until > datetime.utcnow()]
+    muted = [m for m in interaction.guild.members if m.timed_out_until and m.timed_out_until > datetime.now(timezone.utc)]
     if not muted:
         await interaction.response.send_message("Немає зам'ючених користувачів", ephemeral=True)
         return
@@ -766,7 +756,7 @@ async def list_mutes(interaction: discord.Interaction):
 async def list_bans(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.ban_members:
         return await interaction.response.send_message("❌ Потрібні права на бан", ephemeral=True)
-    bans = await interaction.guild.bans()
+    bans = [ban async for ban in interaction.guild.bans()]
     if not bans:
         await interaction.response.send_message("Немає забанених користувачів", ephemeral=True)
         return
