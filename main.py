@@ -894,7 +894,9 @@ async def on_message(message):
             pass
         if user_warnings[user_id] == 1:
             try:
-                await message.channel.send(f"{message.author.mention}, ⚠️ Попередження! Не використовуйте нецензурну лексику.", delete_after=10)
+                warn_msg = await message.channel.send(f"{message.author.mention}, ⚠️ Попередження! Не використовуйте нецензурну лексику.")
+                await asyncio.sleep(2)
+                await warn_msg.delete()
             except Exception:
                 pass
         elif user_warnings[user_id] == 2:
@@ -902,7 +904,9 @@ async def on_message(message):
                 # Мут на 1 годину
                 until = discord.utils.utcnow() + timedelta(hours=1)
                 await message.author.edit(timed_out_until=until, reason="Нецензурна лексика (2 порушення)")
-                await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 годину за повторне використання нецензурної лексики.", delete_after=15)
+                mute_msg = await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 годину за повторне використання нецензурної лексики.")
+                await asyncio.sleep(2)
+                await mute_msg.delete()
             except Exception as e:
                 print(f"Не вдалося видати мут: {e}")
         elif user_warnings[user_id] >= 3:
@@ -910,7 +914,9 @@ async def on_message(message):
                 # Мут на 1 тиждень
                 until = discord.utils.utcnow() + timedelta(weeks=1)
                 await message.author.edit(timed_out_until=until, reason="Нецензурна лексика (3+ порушення)")
-                await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 тиждень за неодноразове використання нецензурної лексики.", delete_after=20)
+                week_mute_msg = await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 тиждень за неодноразове використання нецензурної лексики.")
+                await asyncio.sleep(2)
+                await week_mute_msg.delete()
             except Exception as e:
                 print(f"Не вдалося видати мут: {e}")
         else:
