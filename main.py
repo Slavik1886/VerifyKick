@@ -561,8 +561,9 @@ class ChannelSelectView(View):
     def __init__(self, user: discord.User, text_channels):
         super().__init__(timeout=60)
         self.user = user
+        # Додаємо лише перші 25 каналів
         options = [
-            discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in text_channels
+            discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in text_channels[:25]
         ]
         self.add_item(ChannelDropdown(options, self))
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
