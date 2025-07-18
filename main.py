@@ -10,7 +10,8 @@ import random
 import aiohttp
 from typing import Optional
 import pytz
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
+from discord import TextChannel, Attachment
 
 intents = discord.Intents.default()
 intents.members = True
@@ -34,6 +35,9 @@ invite_cache = {}
 
 # Система привітальних повідомлень
 welcome_messages = {}
+
+# ========== ВІДСТЕЖЕННЯ DEAFENED+MUTED ========== 
+# (видалено)
 
 def load_invite_data():
     try:
@@ -254,6 +258,7 @@ async def on_ready():
         print(f"Помилка синхронізації: {e}")
     check_voice_activity.start()
     update_voice_activity.start()
+    # check_deaf_muted.start() (видалено)
 
 # ========== КОМАНДИ ==========
 
@@ -535,6 +540,121 @@ class JoinRequestView(View):
 @bot.tree.command(name="request_join", description="Подати заявку на приєднання до сервера")
 async def request_join(interaction: discord.Interaction):
     await interaction.response.send_modal(JoinRequestModal())
+
+# ========== СТВОРЕННЯ EMBED ПОСЛІДОВНО ========== 
+from discord import TextChannel, Attachment
+from discord.ui import View, Select
+
+class EmbedData:
+    def __init__(self, channel_id=None, title=None, description=None, thumbnail_url=None, image_url=None, footer=None):
+        self.channel_id = channel_id
+        self.title = title
+        self.description = description
+        self.thumbnail_url = thumbnail_url
+        self.image_url = image_url
+        self.footer = footer
+
+# Кеш для зберігання стану (user_id -> EmbedData)
+embed_creation_cache = {}
+
+class ChannelSelectView(View):
+    def __init__(self, user: discord.User, text_channels):
+        super().__init__(timeout=60)
+        self.user = user
+        options = [
+            discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in text_channels
+        ]
+        self.add_item(ChannelDropdown(options, self))
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user.id
+
+class ChannelDropdown(Select):
+    def __init__(self, options, parent_view):
+        super().__init__(placeholder="Оберіть канал для embed-повідомлення", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+    async def callback(self, interaction: discord.Interaction):
+        channel_id = int(self.values[0])
+        embed_creation_cache[interaction.user.id] = EmbedData(channel_id=channel_id)
+        await interaction.response.send_modal(TitleModal())
+        self.parent_view.stop()
+
+class TitleModal(Modal, title="Введіть тему (заголовок)"):
+    title = TextInput(label="Тема (заголовок)", required=True, max_length=256)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = embed_creation_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.title = self.title.value
+        await interaction.response.send_modal(DescriptionModal())
+
+class DescriptionModal(Modal, title="Введіть основний текст"):
+    description = TextInput(label="Текст повідомлення", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = embed_creation_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.description = self.description.value
+        await interaction.response.send_modal(ThumbnailModal())
+
+class ThumbnailModal(Modal, title="Додати зображення-колонтитул (thumbnail)?"):
+    thumbnail_url = TextInput(label="URL зображення (або залиште порожнім)", required=False)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = embed_creation_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.thumbnail_url = self.thumbnail_url.value.strip() if self.thumbnail_url.value else None
+        await interaction.response.send_modal(ImageModal())
+
+class ImageModal(Modal, title="Додати зображення внизу embed?"):
+    image_url = TextInput(label="URL зображення (або залиште порожнім)", required=False)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = embed_creation_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.image_url = self.image_url.value.strip() if self.image_url.value else None
+        await interaction.response.send_modal(FooterModal())
+
+class FooterModal(Modal, title="Введіть підпис (footer)"):
+    footer = TextInput(label="Підпис (footer)", required=False, max_length=256)
+    async def on_submit(self, interaction: discord.Interaction):
+        data = embed_creation_cache.pop(interaction.user.id, None)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.footer = self.footer.value.strip() if self.footer.value else None
+        # Формуємо embed
+        channel = interaction.guild.get_channel(data.channel_id)
+        if not channel or not isinstance(channel, TextChannel):
+            await interaction.response.send_message("❌ Канал не знайдено або не є текстовим!", ephemeral=True)
+            return
+        embed = discord.Embed(title=data.title, description=data.description, color=discord.Color.blurple(), timestamp=datetime.utcnow())
+        if data.thumbnail_url:
+            embed.set_thumbnail(url=data.thumbnail_url)
+        if data.image_url:
+            embed.set_image(url=data.image_url)
+        if data.footer:
+            embed.set_footer(text=data.footer)
+        try:
+            await channel.send(embed=embed)
+            await interaction.response.send_message(f"✅ Embed-повідомлення надіслано у {channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Помилка надсилання: {e}", ephemeral=True)
+
+@bot.tree.command(name="create_embed", description="Створити embed-повідомлення через діалог")
+async def create_embed(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    text_channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.user).send_messages]
+    if not text_channels:
+        await interaction.response.send_message("❌ Немає доступних текстових каналів", ephemeral=True)
+        return
+    view = ChannelSelectView(interaction.user, text_channels)
+    await interaction.response.send_message("Оберіть канал для embed-повідомлення:", view=view, ephemeral=True)
 
 # ========== ДОДАТКОВІ АДМІН-КОМАНДИ ========== 
 
