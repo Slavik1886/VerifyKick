@@ -10,7 +10,8 @@ import random
 import aiohttp
 from typing import Optional
 import pytz
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
+import feedparser
 
 intents = discord.Intents.default()
 intents.members = True
@@ -377,71 +378,168 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
-@app_commands.describe(
-    channel="Текстовий канал для надсилання",
-    title="Заголовок повідомлення",
-    description="Основний текст повідомлення (використовуйте \\n для нового рядка)",
-    color="Колір рамки (оберіть зі списку)",
-    thumbnail="Зображення для колонтитулу (необов'язково)",
-    image="Зображення для прикріплення (необов'язково)"
-)
-@app_commands.choices(color=[
-    app_commands.Choice(name="🔵 Синій", value="blue"),
-    app_commands.Choice(name="🟢 Зелений", value="green"),
-    app_commands.Choice(name="🔴 Червоний", value="red"),
-    app_commands.Choice(name="🟡 Жовтий", value="yellow"),
-    app_commands.Choice(name="🟣 Фіолетовий", value="purple"),
-    app_commands.Choice(name="🟠 Помаранчевий", value="orange"),
-    app_commands.Choice(name="🌈 Випадковий", value="random")
-])
-async def send_embed(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    title: str,
-    description: str,
-    color: app_commands.Choice[str],
-    thumbnail: discord.Attachment = None,
-    image: discord.Attachment = None
-):
+# ========== НОВИЙ /send_embed з додаванням зображень з пристрою ========== 
+from discord.ui import View, Select, Modal, TextInput, Button
+
+class SendEmbedData:
+    def __init__(self, channel_id=None, title=None, description=None, thumbnail_url=None, image_url=None, footer=None):
+        self.channel_id = channel_id
+        self.title = title
+        self.description = description
+        self.thumbnail_url = thumbnail_url
+        self.image_url = image_url
+        self.footer = footer
+
+send_embed_cache = {}
+
+class SendEmbedChannelView(View):
+    def __init__(self, user, text_channels):
+        super().__init__(timeout=60)
+        self.user = user
+        options = [
+            discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in text_channels[:25]
+        ]
+        self.add_item(SendEmbedChannelDropdown(options, self))
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.user.id
+
+class SendEmbedChannelDropdown(Select):
+    def __init__(self, options, parent_view):
+        super().__init__(placeholder="Оберіть канал для embed-повідомлення", min_values=1, max_values=1, options=options)
+        self.parent_view = parent_view
+    async def callback(self, interaction):
+        channel_id = int(self.values[0])
+        send_embed_cache[interaction.user.id] = SendEmbedData(channel_id=channel_id)
+        if interaction.response.is_done():
+            await interaction.followup.send("Виникла помилка: interaction вже оброблено.", ephemeral=True)
+            return
+        await interaction.response.send_modal(SendEmbedTitleModal())
+        self.parent_view.stop()
+
+class SendEmbedTitleModal(Modal, title="Введіть заголовок"):
+    title = TextInput(label="Заголовок", required=True, max_length=256)
+    async def on_submit(self, interaction):
+        data = send_embed_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.title = self.title.value
+        await interaction.response.send_modal(SendEmbedDescriptionModal())
+
+class SendEmbedDescriptionModal(Modal, title="Введіть текст повідомлення"):
+    description = TextInput(label="Текст повідомлення", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+    async def on_submit(self, interaction):
+        data = send_embed_cache.get(interaction.user.id)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.description = self.description.value
+        # Після тексту — запит на thumbnail
+        await interaction.response.send_message(
+            "Бажаєте додати зображення-колонтитул (thumbnail)? Завантажте файл або натисніть 'Пропустити'.",
+            view=SendEmbedImageUploadView(interaction.user.id, 'thumbnail'),
+            ephemeral=True
+        )
+
+class SendEmbedImageUploadView(View):
+    def __init__(self, user_id, image_type):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.image_type = image_type  # 'thumbnail' або 'image'
+        self.add_item(SendEmbedSkipButton(self))
+    @discord.ui.button(label="Завантажити зображення", style=discord.ButtonStyle.primary)
+    async def upload(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_message(
+            f"Будь ласка, надішліть зображення для {'thumbnail' if self.image_type == 'thumbnail' else 'image'} у відповідь на це повідомлення.",
+            ephemeral=True
+        )
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.user_id
+
+class SendEmbedSkipButton(Button):
+    def __init__(self, parent_view):
+        super().__init__(label="Пропустити", style=discord.ButtonStyle.secondary)
+        self.parent_view = parent_view
+    async def callback(self, interaction):
+        # Якщо це thumbnail — переходимо до image
+        if self.parent_view.image_type == 'thumbnail':
+            await interaction.response.send_message(
+                "Бажаєте додати зображення внизу embed? Завантажте файл або натисніть 'Пропустити'.",
+                view=SendEmbedImageUploadView(self.parent_view.user_id, 'image'),
+                ephemeral=True
+            )
+        else:
+            # Далі — підпис
+            await interaction.response.send_modal(SendEmbedFooterModal())
+
+# Обробка вкладень (attachments) для thumbnail та image
+@bot.event
+async def on_message(message):
+    # Не реагувати на власні повідомлення бота
+    if message.author.bot:
+        return
+    # Перевіряємо, чи користувач у процесі створення embed
+    data = send_embed_cache.get(message.author.id)
+    if not data:
+        return
+    # Якщо користувач надіслав вкладення після запиту
+    if message.attachments:
+        # Визначаємо, яке зображення очікується
+        if not data.thumbnail_url:
+            data.thumbnail_url = message.attachments[0].url
+            # Запитати про image
+            await message.channel.send(
+                "Бажаєте додати зображення внизу embed? Завантажте файл або натисніть 'Пропустити'.",
+                view=SendEmbedImageUploadView(message.author.id, 'image'),
+                delete_after=60
+            )
+        elif not data.image_url:
+            data.image_url = message.attachments[0].url
+            # Далі — підпис
+            await message.channel.send(
+                "Введіть підпис (footer) для embed (або залиште порожнім):",
+                view=None
+            )
+            await message.author.send_modal(SendEmbedFooterModal())
+        await message.delete(delay=1)
+
+class SendEmbedFooterModal(Modal, title="Додати підпис (footer, опціонально)"):
+    footer = TextInput(label="Підпис (footer)", required=False, max_length=256)
+    async def on_submit(self, interaction):
+        data = send_embed_cache.pop(interaction.user.id, None)
+        if not data:
+            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
+            return
+        data.footer = self.footer.value.strip() if self.footer.value else None
+        channel = interaction.guild.get_channel(data.channel_id)
+        if not channel or not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Канал не знайдено або не є текстовим!", ephemeral=True)
+            return
+        embed = discord.Embed(title=data.title, description=data.description, color=discord.Color.blurple(), timestamp=datetime.utcnow())
+        if data.thumbnail_url:
+            embed.set_thumbnail(url=data.thumbnail_url)
+        if data.image_url:
+            embed.set_image(url=data.image_url)
+        if data.footer:
+            embed.set_footer(text=data.footer)
+        try:
+            await channel.send(embed=embed)
+            await interaction.response.send_message(f"✅ Embed-повідомлення надіслано у {channel.mention}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Помилка надсилання: {e}", ephemeral=True)
+
+# Заміна старої команди send_embed
+@bot.tree.command(name="send_embed", description="Зручно створити embed-повідомлення через діалог")
+async def send_embed(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
-    color_map = {
-        "blue": discord.Color.blue(),
-        "green": discord.Color.green(),
-        "red": discord.Color.red(),
-        "yellow": discord.Color.gold(),
-        "purple": discord.Color.purple(),
-        "orange": discord.Color.orange(),
-        "random": discord.Color.random()
-    }
-    selected_color = color_map.get(color.value, discord.Color.blue())
-    embed = discord.Embed(
-        title=title,
-        description=description.replace('\\n', '\n'),
-        color=selected_color,
-        timestamp=datetime.utcnow()
-    )
-    if thumbnail and thumbnail.content_type.startswith('image/'):
-        embed.set_thumbnail(url=thumbnail.url)
-    if image and image.content_type.startswith('image/'):
-        embed.set_image(url=image.url)
-    try:
-        await channel.send(embed=embed)
-        await interaction.response.send_message(
-            f"✅ Повідомлення успішно надіслано до {channel.mention}",
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "❌ Бот не має прав для надсилання повідомлень у цей канал",
-            ephemeral=True
-        )
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Сталася помилка: {str(e)}",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
+        return
+    text_channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.user).send_messages]
+    if not text_channels:
+        await interaction.response.send_message("❌ Немає доступних текстових каналів", ephemeral=True)
+        return
+    view = SendEmbedChannelView(interaction.user, text_channels)
+    await interaction.response.send_message("Оберіть канал для embed-повідомлення:", view=view, ephemeral=True)
 
 @bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
 @app_commands.describe(
@@ -535,6 +633,99 @@ class JoinRequestView(View):
 @bot.tree.command(name="request_join", description="Подати заявку на приєднання до сервера")
 async def request_join(interaction: discord.Interaction):
     await interaction.response.send_modal(JoinRequestModal())
+
+# ========== WoT NEWS AUTOPOST ========== 
+wot_news_settings = {}  # guild_id: channel_id
+wot_news_last_url = {}  # guild_id: last_news_url
+
+WOT_RSS_URL = "https://worldoftanks.eu/uk/rss/news/"
+
+@bot.tree.command(name="setup_wot_news", description="Вказати канал для автоматичних новин World of Tanks")
+@app_commands.describe(channel="Канал для новин")
+async def setup_wot_news(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
+        return
+    wot_news_settings[str(interaction.guild.id)] = channel.id
+    await interaction.response.send_message(f"✅ Канал для WoT новин встановлено: {channel.mention}", ephemeral=True)
+
+async def fetch_wot_news():
+    feed = feedparser.parse(WOT_RSS_URL)
+    news = []
+    for entry in feed.entries:
+        news.append({
+            'title': entry.title,
+            'link': entry.link,
+            'summary': entry.summary,
+            'published': entry.published if 'published' in entry else '',
+            'image': entry.media_content[0]['url'] if 'media_content' in entry and entry.media_content else None
+        })
+    return news
+
+@tasks.loop(minutes=60)
+async def wot_news_autopost():
+    # Рандомна затримка між 1 і 3 годинами
+    await asyncio.sleep(random.randint(0, 7200))
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in wot_news_settings:
+            continue
+        channel = guild.get_channel(wot_news_settings[guild_id])
+        if not channel:
+            continue
+        try:
+            news = await fetch_wot_news()
+            if not news:
+                continue
+            last_url = wot_news_last_url.get(guild_id)
+            # Знайти першу новину, якої ще не було
+            for entry in news:
+                if entry['link'] != last_url:
+                    embed = discord.Embed(
+                        title=entry['title'],
+                        url=entry['link'],
+                        description=entry['summary'],
+                        color=discord.Color.orange()
+                    )
+                    if entry['image']:
+                        embed.set_image(url=entry['image'])
+                    embed.set_footer(text="World of Tanks | Автооновлення новин")
+                    await channel.send(embed=embed)
+                    wot_news_last_url[guild_id] = entry['link']
+                    break
+        except Exception as e:
+            print(f"[WoT News] Error for guild {guild_id}: {e}")
+
+@tasks.loop(minutes=2)
+async def wot_official_news_task():
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in wot_news_settings:
+            continue
+        channel = guild.get_channel(wot_news_settings[guild_id])
+        if not channel:
+            continue
+        try:
+            news = await fetch_wot_news()
+            if not news:
+                continue
+            last_url = wot_news_last_url.get(guild_id)
+            for entry in news:
+                if entry['link'] != last_url:
+                    embed = discord.Embed(
+                        title=entry['title'],
+                        url=entry['link'],
+                        description=entry['summary'],
+                        color=discord.Color.orange()
+                    )
+                    if entry['image']:
+                        embed.set_image(url=entry['image'])
+                    embed.set_footer(text="World of Tanks | Офіційна новина")
+                    await channel.send(embed=embed)
+                    wot_news_last_url[guild_id] = entry['link']
+                    break
+        except Exception as e:
+            print(f"[WoT Official News] Error for guild {guild_id}: {e}")
 
 # ========== ДОДАТКОВІ АДМІН-КОМАНДИ ========== 
 
@@ -814,6 +1005,98 @@ async def purge_user(interaction: discord.Interaction, member: discord.Member, a
 TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     raise ValueError("Відсутній токен Discord")
+
+# Для зберігання останніх новин зі сторонніх джерел
+wot_external_news_last = {}  # guild_id: set(url)
+external_news_queue = []  # [{'guild_id':..., 'entry':...}]
+
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q=World+of+Tanks&hl=uk&gl=UA&ceid=UA:uk"
+YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCkPYmWiWHsI6bPqvYgyBvlg"  # Офіційний WoT EU
+WOTEXPRESS_RSS = "https://wotexpress.info/rss/news/"
+
+async def fetch_rss_news(url):
+    feed = feedparser.parse(url)
+    news = []
+    for entry in feed.entries:
+        news.append({
+            'title': entry.title,
+            'link': entry.link,
+            'summary': entry.summary if 'summary' in entry else '',
+            'published': entry.published if 'published' in entry else '',
+            'image': entry.media_content[0]['url'] if 'media_content' in entry and entry.media_content else None
+        })
+    return news
+
+@tasks.loop(minutes=15)
+async def wot_external_news_task():
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in wot_news_settings:
+            continue
+        channel = guild.get_channel(wot_news_settings[guild_id])
+        if not channel:
+            continue
+        # Google News
+        try:
+            news = await fetch_rss_news(GOOGLE_NEWS_RSS)
+            last_urls = wot_external_news_last.setdefault(guild_id, set())
+            for entry in news:
+                if entry['link'] not in last_urls:
+                    external_news_queue.append({'guild_id': guild_id, 'entry': entry})
+                    last_urls.add(entry['link'])
+        except Exception as e:
+            print(f"[Google News] Error: {e}")
+        # YouTube
+        try:
+            news = await fetch_rss_news(YOUTUBE_WOT_RSS)
+            last_urls = wot_external_news_last.setdefault(guild_id, set())
+            for entry in news:
+                if entry['link'] not in last_urls:
+                    external_news_queue.append({'guild_id': guild_id, 'entry': entry})
+                    last_urls.add(entry['link'])
+        except Exception as e:
+            print(f"[YouTube] Error: {e}")
+        # WoT Express
+        try:
+            news = await fetch_rss_news(WOTEXPRESS_RSS)
+            last_urls = wot_external_news_last.setdefault(guild_id, set())
+            for entry in news:
+                if entry['link'] not in last_urls:
+                    external_news_queue.append({'guild_id': guild_id, 'entry': entry})
+                    last_urls.add(entry['link'])
+        except Exception as e:
+            print(f"[WoT Express] Error: {e}")
+
+# Публікація новин з черги з рандомною затримкою
+@tasks.loop(minutes=10)
+async def wot_external_news_publisher():
+    if not external_news_queue:
+        return
+    item = external_news_queue.pop(0)
+    guild_id = item['guild_id']
+    entry = item['entry']
+    channel_id = wot_news_settings.get(guild_id)
+    if not channel_id:
+        return
+    for guild in bot.guilds:
+        if str(guild.id) == guild_id:
+            channel = guild.get_channel(channel_id)
+            if channel:
+                embed = discord.Embed(
+                    title=entry['title'],
+                    url=entry['link'],
+                    description=entry['summary'],
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                if entry['image']:
+                    embed.set_image(url=entry['image'])
+                embed.set_footer(text="World of Tanks | Новина з інтернету")
+                # Рандомна затримка перед публікацією
+                delay = random.randint(3600, 10800)  # 1-3 години
+                bot.loop.create_task(asyncio.sleep(delay))
+                bot.loop.create_task(channel.send(embed=embed))
+            break
 
 if __name__ == '__main__':
     print("Запуск бота...")
