@@ -255,6 +255,11 @@ async def on_ready():
         print(f"Помилка синхронізації: {e}")
     check_voice_activity.start()
     update_voice_activity.start()
+    wot_news_autopost.start()
+    wot_official_news_task.start()
+    wot_external_news_task.start()
+    wot_external_news_publisher.start()
+    telegram_wotclue_news_task.start()
 
 # ========== КОМАНДИ ==========
 
@@ -1097,6 +1102,44 @@ async def wot_external_news_publisher():
                 bot.loop.create_task(asyncio.sleep(delay))
                 bot.loop.create_task(channel.send(embed=embed))
             break
+
+TELEGRAM_WOTCLUE_RSS = "https://rsshub.app/telegram/channel/Wotclue_eu"
+wotclue_news_last_url = {}  # guild_id: last_news_url
+
+async def fetch_telegram_wotclue_news():
+    return await fetch_rss_news(TELEGRAM_WOTCLUE_RSS)
+
+@tasks.loop(minutes=10)
+async def telegram_wotclue_news_task():
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in wot_news_settings:
+            continue
+        channel = guild.get_channel(wot_news_settings[guild_id])
+        if not channel:
+            continue
+        try:
+            news = await fetch_telegram_wotclue_news()
+            if not news:
+                continue
+            last_url = wotclue_news_last_url.get(guild_id)
+            for entry in news:
+                if entry['link'] != last_url:
+                    embed = discord.Embed(
+                        title=entry['title'],
+                        url=entry['link'],
+                        description=entry['summary'],
+                        color=discord.Color.teal(),
+                        timestamp=datetime.utcnow()
+                    )
+                    if entry['image']:
+                        embed.set_image(url=entry['image'])
+                    embed.set_footer(text="Wotclue EU | Telegram")
+                    await channel.send(embed=embed)
+                    wotclue_news_last_url[guild_id] = entry['link']
+                    break  # Надсилаємо тільки одну нову новину за цикл
+        except Exception as e:
+            print(f"[Telegram Wotclue News] Error: {e}")
 
 if __name__ == '__main__':
     print("Запуск бота...")
