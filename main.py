@@ -815,6 +815,72 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     raise ValueError("Відсутній токен Discord")
 
+import re
+import json
+
+BAD_WORDS = [
+    # Українські
+    "хуй", "пизда", "єбать", "єбло", "блядь", "манда", "гандон", "курва", "сука", "підарас", "залупа", "мудило", "долбоєб", "ублюдок", "шалава", "срака", "гівно",
+    # Російські
+    "хуй", "пизда", "ебать", "ебло", "блять", "манда", "гандон", "сука", "пидорас", "залупа", "мудила", "долбоёб", "ублюдок", "шалава", "жопа", "говно"
+]
+
+BAD_WORDS_RE = re.compile(r"\b(" + "|".join(re.escape(word) for word in BAD_WORDS) + r")\b", re.IGNORECASE)
+
+# --- Збереження порушників ---
+OFFENDERS_FILE = 'offenders.json'
+
+def load_offenders():
+    try:
+        with open(OFFENDERS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_offenders(data):
+    with open(OFFENDERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+
+user_warnings = defaultdict(int, {int(k): v for k, v in load_offenders().items()})
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.guild is None:
+        return
+    if BAD_WORDS_RE.search(message.content):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        user_id = message.author.id
+        user_warnings[user_id] += 1
+        save_offenders({str(k): v for k, v in user_warnings.items()})
+        if user_warnings[user_id] == 1:
+            try:
+                await message.channel.send(f"{message.author.mention}, ⚠️ Попередження! Не використовуйте нецензурну лексику.", delete_after=10)
+            except Exception:
+                pass
+        elif user_warnings[user_id] == 2:
+            try:
+                # Мут на 1 годину
+                until = discord.utils.utcnow() + timedelta(hours=1)
+                await message.author.edit(timed_out_until=until, reason="Нецензурна лексика (2 порушення)")
+                await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 годину за повторне використання нецензурної лексики.", delete_after=15)
+            except Exception as e:
+                print(f"Не вдалося видати мут: {e}")
+        elif user_warnings[user_id] >= 3:
+            try:
+                # Мут на 1 тиждень
+                until = discord.utils.utcnow() + timedelta(weeks=1)
+                await message.author.edit(timed_out_until=until, reason="Нецензурна лексика (3+ порушення)")
+                await message.channel.send(f"{message.author.mention}, ⛔ Ви отримали мут на 1 тиждень за неодноразове використання нецензурної лексики.", delete_after=20)
+            except Exception as e:
+                print(f"Не вдалося видати мут: {e}")
+        else:
+            pass
+
 if __name__ == '__main__':
     print("Запуск бота...")
     bot.run(TOKEN) 
