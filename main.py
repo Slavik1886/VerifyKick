@@ -251,16 +251,31 @@ async def on_ready():
     for guild in bot.guilds:
         await update_invite_cache(guild)
         guild_id = str(guild.id)
-        # --- Ініціалізація last_url для WoT новин ---
+        # WoT офіційні новини
         if guild_id in wot_news_settings:
             news = await fetch_wot_news()
             if news:
                 wot_news_last_url[guild_id] = news[0]['link']
-        # --- Ініціалізація last_url для Telegram Wotclue ---
+        # Telegram Wotclue
         if guild_id in wot_news_settings:
             news = await fetch_telegram_wotclue_news()
             if news:
                 wotclue_news_last_url[guild_id] = news[0]['link']
+        # Google News
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(GOOGLE_NEWS_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
+        # YouTube
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(YOUTUBE_WOT_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
+        # WoT Express
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(WOTEXPRESS_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
     try:
         synced = await bot.tree.sync()
         print(f"Синхронізовано {len(synced)} команд")
