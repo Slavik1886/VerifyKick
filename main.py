@@ -12,6 +12,8 @@ from typing import Optional
 import pytz
 from discord.ui import View, Button, Modal, TextInput, Select
 import feedparser
+import re
+from html import unescape
 
 intents = discord.Intents.default()
 intents.members = True
@@ -689,7 +691,7 @@ async def wot_news_autopost():
                     embed = discord.Embed(
                         title=entry['title'],
                         url=entry['link'],
-                        description=entry['summary'],
+                        description=clean_html(entry['summary']),
                         color=discord.Color.orange()
                     )
                     if entry['image']:
@@ -720,7 +722,7 @@ async def wot_official_news_task():
                     embed = discord.Embed(
                         title=entry['title'],
                         url=entry['link'],
-                        description=entry['summary'],
+                        description=clean_html(entry['summary']),
                         color=discord.Color.orange()
                     )
                     if entry['image']:
@@ -1090,7 +1092,7 @@ async def wot_external_news_publisher():
                 embed = discord.Embed(
                     title=entry['title'],
                     url=entry['link'],
-                    description=entry['summary'],
+                    description=clean_html(entry['summary']),
                     color=discord.Color.blue(),
                     timestamp=datetime.utcnow()
                 )
@@ -1128,7 +1130,7 @@ async def telegram_wotclue_news_task():
                     embed = discord.Embed(
                         title=entry['title'],
                         url=entry['link'],
-                        description=entry['summary'],
+                        description=clean_html(entry['summary']),
                         color=discord.Color.teal(),
                         timestamp=datetime.utcnow()
                     )
@@ -1140,6 +1142,10 @@ async def telegram_wotclue_news_task():
                     break  # Надсилаємо тільки одну нову новину за цикл
         except Exception as e:
             print(f"[Telegram Wotclue News] Error: {e}")
+
+def clean_html(raw_html):
+    clean_text = re.sub('<.*?>', '', raw_html)
+    return unescape(clean_text).strip()
 
 if __name__ == '__main__':
     print("Запуск бота...")
