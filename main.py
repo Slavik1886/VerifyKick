@@ -250,6 +250,17 @@ async def on_ready():
     print(f"Поточний час (Київ): {now}")
     for guild in bot.guilds:
         await update_invite_cache(guild)
+        guild_id = str(guild.id)
+        # --- Ініціалізація last_url для WoT новин ---
+        if guild_id in wot_news_settings:
+            news = await fetch_wot_news()
+            if news:
+                wot_news_last_url[guild_id] = news[0]['link']
+        # --- Ініціалізація last_url для Telegram Wotclue ---
+        if guild_id in wot_news_settings:
+            news = await fetch_telegram_wotclue_news()
+            if news:
+                wotclue_news_last_url[guild_id] = news[0]['link']
     try:
         synced = await bot.tree.sync()
         print(f"Синхронізовано {len(synced)} команд")
@@ -1096,8 +1107,7 @@ async def wot_external_news_publisher():
                     color=discord.Color.blue(),
                     timestamp=datetime.utcnow()
                 )
-                if entry['image']:
-                    embed.set_image(url=entry['image'])
+                # НЕ додаємо поля з посиланнями
                 embed.set_footer(text="World of Tanks | Новина з інтернету")
                 # Рандомна затримка перед публікацією
                 delay = random.randint(3600, 10800)  # 1-3 години
@@ -1134,8 +1144,7 @@ async def telegram_wotclue_news_task():
                         color=discord.Color.teal(),
                         timestamp=datetime.utcnow()
                     )
-                    if entry['image']:
-                        embed.set_image(url=entry['image'])
+                    # НЕ додаємо поля з посиланнями
                     embed.set_footer(text="Wotclue EU | Telegram")
                     await channel.send(embed=embed)
                     wotclue_news_last_url[guild_id] = entry['link']
@@ -1146,6 +1155,10 @@ async def telegram_wotclue_news_task():
 def clean_html(raw_html):
     clean_text = re.sub('<.*?>', '', raw_html)
     return unescape(clean_text).strip()
+
+def extract_links(html):
+    # Пошук усіх <a href="...">текст</a>
+    return re.findall(r'<a\s+href=[\'\"](.*?)[\'\"].*?>(.*?)<\/a>', html)
 
 if __name__ == '__main__':
     print("Запуск бота...")
