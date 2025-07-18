@@ -257,7 +257,22 @@ async def on_ready():
 
 # ========== КОМАНДИ ==========
 
+ALLOWED_ROLE_ID = 1359443269846700083  # ID ролі з доступом
+
+def is_allowed_role_or_owner():
+    async def predicate(interaction: discord.Interaction):
+        # Власник сервера завжди має доступ
+        if interaction.user.id == interaction.guild.owner_id:
+            return True
+        # Перевірка наявності ролі
+        allowed_role = interaction.guild.get_role(ALLOWED_ROLE_ID)
+        if allowed_role and allowed_role in interaction.user.roles:
+            return True
+        return False
+    return app_commands.check(predicate)
+
 @bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
+@is_allowed_role_or_owner()
 @app_commands.describe(
     invite="Код запрошення (без discord.gg/)",
     role="Роль для надання"
@@ -286,6 +301,7 @@ async def assign_role_to_invite(interaction: discord.Interaction, invite: str, r
         )
 
 @bot.tree.command(name="track_voice", description="Налаштувати відстеження неактивності у голосових каналах")
+@is_allowed_role_or_owner()
 @app_commands.describe(
     voice_channel="Голосовий канал для відстеження",
     log_channel="Канал для повідомлень",
@@ -311,6 +327,7 @@ async def track_voice(interaction: discord.Interaction,
     )
 
 @bot.tree.command(name="remove_default_only", description="Видаляє користувачів тільки з @everyone")
+@is_allowed_role_or_owner()
 async def remove_default_only(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
@@ -326,6 +343,7 @@ async def remove_default_only(interaction: discord.Interaction):
     await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
 
 @bot.tree.command(name="remove_by_role", description="Видаляє користувачів з роллю")
+@is_allowed_role_or_owner()
 @app_commands.describe(role="Роль для видалення")
 async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
@@ -345,6 +363,7 @@ async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
 
 @bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
+@is_allowed_role_or_owner()
 async def list_no_roles(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
@@ -361,6 +380,7 @@ async def list_no_roles(interaction: discord.Interaction):
         await interaction.followup.send(msg, ephemeral=True)
 
 @bot.tree.command(name="show_role_users", description="Показати користувачів з роллю")
+@is_allowed_role_or_owner()
 @app_commands.describe(role="Роль для перегляду")
 async def show_role_users(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.defer(ephemeral=True)
@@ -378,6 +398,7 @@ async def show_role_users(interaction: discord.Interaction, role: discord.Role):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="send_embed", description="Надіслати embed-повідомлення у вказаний канал")
+@is_allowed_role_or_owner()
 @app_commands.describe(
     channel="Текстовий канал для надсилання",
     title="Заголовок повідомлення",
@@ -444,6 +465,7 @@ async def send_embed(
         )
 
 @bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
+@is_allowed_role_or_owner()
 @app_commands.describe(
     channel="Канал для привітальних повідомлень"
 )
@@ -467,6 +489,7 @@ async def setup_welcome(interaction: discord.Interaction, channel: discord.TextC
     )
 
 @bot.tree.command(name="disable_welcome", description="Вимкнути привітальні повідомлення")
+@is_allowed_role_or_owner()
 async def disable_welcome(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
@@ -539,6 +562,7 @@ async def request_join(interaction: discord.Interaction):
 # ========== ДОДАТКОВІ АДМІН-КОМАНДИ ========== 
 
 @bot.tree.command(name="purge", description="Видалити N останніх повідомлень у каналі")
+@is_allowed_role_or_owner()
 @app_commands.describe(amount="Кількість повідомлень для видалення")
 async def purge(interaction: discord.Interaction, amount: int):
     if not interaction.user.guild_permissions.manage_messages:
@@ -549,6 +573,7 @@ async def purge(interaction: discord.Interaction, amount: int):
     await interaction.response.send_message(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
 
 @bot.tree.command(name="mute", description="Видати мут користувачу")
+@is_allowed_role_or_owner()
 @app_commands.describe(
     member="Користувач тимчасово заблокований",
     reason="Причина",
@@ -624,6 +649,7 @@ async def mute(
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="unmute", description="Зняти мут з користувача")
+@is_allowed_role_or_owner()
 @app_commands.describe(member="Користувач для розм'юту")
 async def unmute(interaction: discord.Interaction, member: discord.Member):
     if not interaction.user.guild_permissions.moderate_members:
@@ -644,6 +670,7 @@ async def unmute(interaction: discord.Interaction, member: discord.Member):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="ban", description="Забанити користувача")
+@is_allowed_role_or_owner()
 @app_commands.describe(member="Користувач для бану", reason="Причина")
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = ""): 
     if not interaction.user.guild_permissions.ban_members:
@@ -655,6 +682,7 @@ async def ban(interaction: discord.Interaction, member: discord.Member, reason: 
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="unban", description="Розбанити користувача за ID")
+@is_allowed_role_or_owner()
 @app_commands.describe(user_id="ID користувача для розбану")
 async def unban(interaction: discord.Interaction, user_id: int):
     if not interaction.user.guild_permissions.ban_members:
@@ -667,6 +695,7 @@ async def unban(interaction: discord.Interaction, user_id: int):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="slowmode", description="Встановити повільний режим у каналі")
+@is_allowed_role_or_owner()
 @app_commands.describe(seconds="Інтервал у секундах")
 async def slowmode(interaction: discord.Interaction, seconds: int):
     if not interaction.user.guild_permissions.manage_channels:
@@ -678,6 +707,7 @@ async def slowmode(interaction: discord.Interaction, seconds: int):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="announce", description="Зробити оголошення у вказаному каналі")
+@is_allowed_role_or_owner()
 @app_commands.describe(channel="Канал для оголошення", message="Текст оголошення")
 async def announce(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
     if not interaction.user.guild_permissions.administrator:
@@ -689,6 +719,7 @@ async def announce(interaction: discord.Interaction, channel: discord.TextChanne
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="roleinfo", description="Показати інформацію про роль")
+@is_allowed_role_or_owner()
 @app_commands.describe(role="Роль")
 async def roleinfo(interaction: discord.Interaction, role: discord.Role):
     embed = discord.Embed(title=f"Роль: {role.name}", color=role.color, timestamp=datetime.utcnow())
@@ -701,6 +732,7 @@ async def roleinfo(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="add_role", description="Видати роль користувачу")
+@is_allowed_role_or_owner()
 @app_commands.describe(member="Користувач", role="Роль")
 async def add_role(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
@@ -712,6 +744,7 @@ async def add_role(interaction: discord.Interaction, member: discord.Member, rol
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="remove_role", description="Зняти роль з користувача")
+@is_allowed_role_or_owner()
 @app_commands.describe(member="Користувач", role="Роль")
 async def remove_role(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if not interaction.user.guild_permissions.administrator:
@@ -723,6 +756,7 @@ async def remove_role(interaction: discord.Interaction, member: discord.Member, 
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="lock_channel", description="Заблокувати канал для @everyone")
+@is_allowed_role_or_owner()
 async def lock_channel(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_channels:
         return await interaction.response.send_message("❌ Потрібні права на керування каналами", ephemeral=True)
@@ -735,6 +769,7 @@ async def lock_channel(interaction: discord.Interaction):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="unlock_channel", description="Розблокувати канал для @everyone")
+@is_allowed_role_or_owner()
 async def unlock_channel(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_channels:
         return await interaction.response.send_message("❌ Потрібні права на керування каналами", ephemeral=True)
@@ -747,6 +782,7 @@ async def unlock_channel(interaction: discord.Interaction):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="clear_reactions", description="Очистити всі реакції з повідомлення")
+@is_allowed_role_or_owner()
 @app_commands.describe(message_id="ID повідомлення")
 async def clear_reactions(interaction: discord.Interaction, message_id: int):
     if not interaction.user.guild_permissions.manage_messages:
@@ -759,6 +795,7 @@ async def clear_reactions(interaction: discord.Interaction, message_id: int):
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="list_mutes", description="Показати зам'ючених користувачів")
+@is_allowed_role_or_owner()
 async def list_mutes(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.moderate_members:
         return await interaction.response.send_message("❌ Потрібні права модератора", ephemeral=True)
@@ -775,6 +812,7 @@ async def list_mutes(interaction: discord.Interaction):
     await interaction.response.send_message(f"Зам'ючені користувачі:\n{msg}", ephemeral=True)
 
 @bot.tree.command(name="list_bans", description="Показати забанених користувачів")
+@is_allowed_role_or_owner()
 async def list_bans(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.ban_members:
         return await interaction.response.send_message("❌ Потрібні права на бан", ephemeral=True)
@@ -786,6 +824,7 @@ async def list_bans(interaction: discord.Interaction):
     await interaction.response.send_message(f"Забановані користувачі:\n{msg}", ephemeral=True)
 
 @bot.tree.command(name="change_nick", description="Змінити нікнейм користувача")
+@is_allowed_role_or_owner()
 @app_commands.describe(member="Користувач", nickname="Новий нікнейм")
 async def change_nick(interaction: discord.Interaction, member: discord.Member, nickname: str):
     if not interaction.user.guild_permissions.manage_nicknames:
@@ -797,17 +836,18 @@ async def change_nick(interaction: discord.Interaction, member: discord.Member, 
         await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
 
 @bot.tree.command(name="purge_user", description="Видалити N останніх повідомлень користувача у цьому каналі")
-@app_commands.describe(member="Користувач", amount="Кількість повідомлень")
-async def purge_user(interaction: discord.Interaction, member: discord.Member, amount: int):
+@is_allowed_role_or_owner()
+@app_commands.describe(user="Користувач (може бути не на сервері)", amount="Кількість повідомлень")
+async def purge_user(interaction: discord.Interaction, user: discord.User, amount: int):
     if not interaction.user.guild_permissions.manage_messages:
         return await interaction.response.send_message("❌ Потрібні права на керування повідомленнями", ephemeral=True)
     if amount < 1 or amount > 100:
         return await interaction.response.send_message("❌ Вкажіть число від 1 до 100", ephemeral=True)
     await interaction.response.defer(ephemeral=True)
     def is_user(m):
-        return m.author.id == member.id
+        return m.author.id == user.id
     deleted = await interaction.channel.purge(limit=amount, check=is_user)
-    await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень від {member.mention}", ephemeral=True)
+    await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень від {user.mention}", ephemeral=True)
 
 # ========== ЗАПУСК ==========
 
