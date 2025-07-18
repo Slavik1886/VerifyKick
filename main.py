@@ -349,15 +349,18 @@ async def remove_default_only(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    deleted = 0
-    for member in interaction.guild.members:
-        if not member.bot and len(member.roles) == 1:
-            try:
-                await member.kick(reason="Тільки @everyone")
-                deleted += 1
-            except: pass
-    await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        deleted = 0
+        for member in interaction.guild.members:
+            if not member.bot and len(member.roles) == 1:
+                try:
+                    await member.kick(reason="Тільки @everyone")
+                    deleted += 1
+                except: pass
+        await interaction.followup.send(f"Видалено {deleted} користувачів", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="remove_by_role", description="Видаляє користувачів з роллю")
 @app_commands.describe(role="Роль для видалення")
@@ -368,48 +371,57 @@ async def remove_by_role(interaction: discord.Interaction, role: discord.Role):
     if role == interaction.guild.default_role:
         await interaction.response.send_message("Не можна видаляти всіх", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    deleted = 0
-    for member in role.members:
-        if not member.bot:
-            try:
-                await member.kick(reason=f"Видалення ролі {role.name}")
-                deleted += 1
-            except: pass
-    await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        deleted = 0
+        for member in role.members:
+            if not member.bot:
+                try:
+                    await member.kick(reason=f"Видалення ролі {role.name}")
+                    deleted += 1
+                except: pass
+        await interaction.followup.send(f"Видалено {deleted} користувачів з роллю {role.name}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="list_no_roles", description="Список користувачів без ролей")
 async def list_no_roles(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
-    members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
+    try:
+        await interaction.response.defer(ephemeral=True)
+        members = [f"{m.display_name} ({m.id})" for m in interaction.guild.members 
                if not m.bot and len(m.roles) == 1]
-    if not members:
-        await interaction.followup.send("Немає таких користувачів", ephemeral=True)
-        return
-    chunks = [members[i:i+20] for i in range(0, len(members), 20)]
-    for i, chunk in enumerate(chunks):
-        msg = f"Користувачі без ролей (частина {i+1}):\n" + "\n".join(chunk)
-        await interaction.followup.send(msg, ephemeral=True)
+        if not members:
+            await interaction.followup.send("Немає таких користувачів", ephemeral=True)
+            return
+        chunks = [members[i:i+20] for i in range(0, len(members), 20)]
+        for i, chunk in enumerate(chunks):
+            msg = f"Користувачі без ролей (частина {i+1}):\n" + "\n".join(chunk)
+            await interaction.followup.send(msg, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="show_role_users", description="Показати користувачів з роллю")
 @app_commands.describe(role="Роль для перегляду")
 async def show_role_users(interaction: discord.Interaction, role: discord.Role):
-    await interaction.response.defer(ephemeral=True)
-    members = [f"{m.mention} ({m.display_name})" for m in role.members if not m.bot]
-    if not members:
-        await interaction.followup.send(f"Немає користувачів з роллю {role.name}", ephemeral=True)
-        return
-    chunks = [members[i:i+15] for i in range(0, len(members), 15)]
-    for i, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title=f"Користувачі з роллю {role.name} ({len(members)})",
-            description="\n".join(chunk),
-            color=role.color
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        members = [f"{m.mention} ({m.display_name})" for m in role.members if not m.bot]
+        if not members:
+            await interaction.followup.send(f"Немає користувачів з роллю {role.name}", ephemeral=True)
+            return
+        chunks = [members[i:i+15] for i in range(0, len(members), 15)]
+        for i, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title=f"Користувачі з роллю {role.name} ({len(members)})",
+                description="\n".join(chunk),
+                color=role.color
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 # ========== НОВИЙ /send_embed з додаванням зображень з пристрою ========== 
 from discord.ui import View, Select, Modal, TextInput, Button
@@ -907,8 +919,16 @@ async def purge(interaction: discord.Interaction, amount: int):
         return await interaction.response.send_message("❌ Потрібні права на керування повідомленнями", ephemeral=True)
     if amount < 1 or amount > 100:
         return await interaction.response.send_message("❌ Вкажіть число від 1 до 100", ephemeral=True)
-    deleted = await interaction.channel.purge(limit=amount)
-    await interaction.response.send_message(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        deleted = await interaction.channel.purge(limit=amount)
+        await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
+    except discord.errors.DiscordServerError:
+        await interaction.followup.send("❌ Discord тимчасово недоступний. Спробуйте ще раз пізніше.", ephemeral=True)
+    except discord.errors.NotFound:
+        await interaction.followup.send("❌ Взаємодію прострочено або не знайдено.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="mute", description="Видати мут користувачу")
 @app_commands.describe(
@@ -1165,11 +1185,18 @@ async def purge_user(interaction: discord.Interaction, member: discord.Member, a
         return await interaction.response.send_message("❌ Потрібні права на керування повідомленнями", ephemeral=True)
     if amount < 1 or amount > 100:
         return await interaction.response.send_message("❌ Вкажіть число від 1 до 100", ephemeral=True)
-    await interaction.response.defer(ephemeral=True)
-    def is_user(m):
-        return m.author.id == member.id
-    deleted = await interaction.channel.purge(limit=amount, check=is_user)
-    await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень від {member.mention}", ephemeral=True)
+    try:
+        await interaction.response.defer(ephemeral=True)
+        def is_user(m):
+            return m.author.id == member.id
+        deleted = await interaction.channel.purge(limit=amount, check=is_user)
+        await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень від {member.mention}", ephemeral=True)
+    except discord.errors.DiscordServerError:
+        await interaction.followup.send("❌ Discord тимчасово недоступний. Спробуйте ще раз пізніше.", ephemeral=True)
+    except discord.errors.NotFound:
+        await interaction.followup.send("❌ Взаємодію прострочено або не знайдено.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 # ========== ЗАПУСК ==========
 
