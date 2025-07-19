@@ -1295,7 +1295,7 @@ wot_external_news_last = {}  # guild_id: set(url)
 external_news_queue = []  # [{'guild_id':..., 'entry':...}]
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q=World+of+Tanks&hl=uk&gl=UA&ceid=UA:uk"
-YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCkPYmWiWHsI6bPqvYgyBvlg"  # Офіційний WoT EU
+YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCh554z2-7vIA-Mf9qAameoA"  # Офіційний WoT Official
 WOTEXPRESS_RSS = "https://wotexpress.info/rss/news/"
 WOT_UA_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/worldoftanksua_official"
 WOTCLUE_EU_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue_eu"
