@@ -151,6 +151,156 @@ async def on_voice_state_update(member, before, after):
             del voice_time_tracker[member_key]
             warning_sent.discard(member_key)
 
+@bot.event
+async def on_member_join(member):
+    if member.bot:
+        return
+    
+    guild = member.guild
+    assigned_role = None
+    
+    try:
+        current_invites = await guild.invites()
+        used_invite = None
+        for invite in current_invites:
+            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+            if invite.uses > cached_uses:
+                used_invite = invite
+                break
+        
+        if used_invite:
+            await update_invite_cache(guild)
+            guild_roles = invite_roles.get(str(guild.id), {})
+            role_id = guild_roles.get(used_invite.code)
+            
+            if role_id:
+                role = guild.get_role(role_id)
+                if role:
+                    try:
+                        await member.add_roles(role)
+                        assigned_role = role
+                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
+                    except discord.Forbidden:
+                        print(f"Немає дозволу надавати роль {role.name}")
+                    except Exception as e:
+                        print(f"Помилка надання ролі: {e}")
+    except Exception as e:
+        print(f"Помилка обробки нового учасника: {e}")
+    
+    # Обробка привітальних повідомлень
+    if str(guild.id) in welcome_messages:
+        channel_id = welcome_messages[str(guild.id)]["channel_id"]
+        channel = guild.get_channel(channel_id)
+        if channel:
+            try:
+                inviter = "Невідомо"
+                if used_invite and used_invite.inviter:
+                    inviter = used_invite.inviter.mention
+                role_info = "Не призначено"
+                if assigned_role:
+                    role_info = assigned_role.mention
+                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+                embed = discord.Embed(
+                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
+                    color=discord.Color.green(),
+                    timestamp=kyiv_time
+                )
+                embed.set_thumbnail(url=member.display_avatar.url)
+                embed.add_field(
+                    name="Користувач",
+                    value=f"{member.mention}\n{member.display_name}",
+                    inline=True
+                )
+                embed.add_field(
+                    name="Запросив",
+                    value=inviter,
+                    inline=True
+                )
+                embed.add_field(
+                    name="Призначена роль",
+                    value=role_info,
+                    inline=False
+                )
+                embed.add_field(
+                    name="Дата реєстрації в Discord",
+                    value=member.created_at.strftime("%d.%m.%Y"),
+                    inline=False
+                )
+                embed.set_footer(
+                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
+                    icon_url=guild.icon.url if guild.icon else None
+                )
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Помилка при відправці привітання: {e}")
+
+@bot.event
+async def on_invite_create(invite):
+    await update_invite_cache(invite.guild)
+
+@bot.event
+async def on_invite_delete(invite):
+    await update_invite_cache(invite.guild)
+
+@bot.event
+async def on_ready():
+    print(f'Бот {bot.user} онлайн!')
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(kyiv_tz)
+    print(f"Поточний час (Київ): {now}")
+    for guild in bot.guilds:
+        await update_invite_cache(guild)
+        guild_id = str(guild.id)
+        # WoT офіційні новини
+        if guild_id in wot_news_settings:
+            news = await fetch_wot_news()
+            if news:
+                wot_news_last_url[guild_id] = news[0]['link']
+        # Telegram Wotclue
+        if guild_id in wot_news_settings:
+            news = await fetch_telegram_wotclue_news()
+            if news:
+                wotclue_news_last_url[guild_id] = news[0]['link']
+        # Google News
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(GOOGLE_NEWS_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
+        # YouTube
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(YOUTUBE_WOT_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
+        # WoT Express
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(WOTEXPRESS_RSS)
+            if news:
+                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
+        # Telegram WoT UA
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(WOT_UA_TELEGRAM_RSS)
+            if news:
+                wotua_news_last_url[guild_id] = news[0]['link']
+        # Telegram WOTCLUE EU
+        if guild_id in wot_news_settings:
+            news = await fetch_rss_news(WOTCLUE_EU_TELEGRAM_RSS)
+            if news:
+                wotclue_eu_news_last_url[guild_id] = news[0]['link']
+    try:
+        synced = await bot.tree.sync()
+        print(f"Синхронізовано {len(synced)} команд")
+    except Exception as e:
+        print(f"Помилка синхронізації: {e}")
+    check_voice_activity.start()
+    update_voice_activity.start()
+    wot_news_autopost.start()
+    wot_official_news_task.start()
+    wot_external_news_task.start()
+    wot_external_news_publisher.start()
+    telegram_wotclue_news_task.start()
+    telegram_wotua_news_task.start()
+    telegram_wotclue_eu_news_task.start()
+
 # ========== КОМАНДИ ==========
 
 @bot.tree.command(name="assign_role_to_invite", description="Призначити роль для конкретного запрошення")
@@ -1201,204 +1351,6 @@ def clean_html(raw_html):
 def extract_links(html):
     # Пошук усіх <a href="...">текст</a>
     return re.findall(r'<a\s+href=[\'\"](.*?)[\'\"].*?>(.*?)<\/a>', html)
-
-WG_API_KEY = "180fc971b4111ed71923f2135aa73b74"
-CLAN_ID = 500310423
-CLAN_ROLE_ID = 1331255972303470603
-
-async def check_nickname_in_clan(nickname: str) -> bool:
-    async with aiohttp.ClientSession() as session:
-        # 1. Знайти account_id по нікнейму
-        url = f"https://api.worldoftanks.eu/wot/account/list/?application_id={WG_API_KEY}&search={nickname}"
-        async with session.get(url) as resp:
-            data = await resp.json()
-            if not data['data']:
-                return False
-            account_id = data['data'][0]['account_id']
-        # 2. Перевірити клан
-        url = f"https://api.worldoftanks.eu/wot/clans/accountinfo/?application_id={WG_API_KEY}&account_id={account_id}"
-        async with session.get(url) as resp:
-            data = await resp.json()
-            clan = data['data'][str(account_id)]['clan_id']
-            return clan == CLAN_ID
-
-from discord.ui import Modal, TextInput
-
-class NicknameModal(Modal, title="Введіть свій WoT нікнейм"):
-    nickname = TextInput(label="Ігровий нікнейм", required=True, max_length=24)
-
-    def __init__(self, member, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.member = member
-
-    async def on_submit(self, interaction):
-        nickname = self.nickname.value.strip()
-        in_clan = await check_nickname_in_clan(nickname)
-        if in_clan:
-            role = interaction.guild.get_role(CLAN_ROLE_ID)
-            if role:
-                await self.member.add_roles(role)
-                await interaction.response.send_message("✅ Ви додані до клану!", ephemeral=True)
-            else:
-                await interaction.response.send_message("❌ Роль не знайдена!", ephemeral=True)
-        else:
-            try:
-                await self.member.send("❌ Ви не перебуваєте у клані. Зверніться до офіцерів клану.")
-            except:
-                pass
-            await interaction.response.send_message("❌ Ви не перебуваєте у клані.", ephemeral=True)
-
-# --- Додаємо виклик модального вікна після приєднання через спеціальне запрошення ---
-
-@bot.event
-async def on_member_join(member):
-    if member.bot:
-        return
-    
-    guild = member.guild
-    assigned_role = None
-    
-    try:
-        current_invites = await guild.invites()
-        used_invite = None
-        for invite in current_invites:
-            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
-            if invite.uses > cached_uses:
-                used_invite = invite
-                break
-        
-        if used_invite:
-            await update_invite_cache(guild)
-            guild_roles = invite_roles.get(str(guild.id), {})
-            role_id = guild_roles.get(used_invite.code)
-            
-            if role_id:
-                role = guild.get_role(role_id)
-                if role:
-                    try:
-                        await member.add_roles(role)
-                        assigned_role = role
-                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
-                    except discord.Forbidden:
-                        print(f"Немає дозволу надавати роль {role.name}")
-                    except Exception as e:
-                        print(f"Помилка надання ролі: {e}")
-    except Exception as e:
-        print(f"Помилка обробки нового учасника: {e}")
-    
-    # Обробка привітальних повідомлень
-    if str(guild.id) in welcome_messages:
-        channel_id = welcome_messages[str(guild.id)]["channel_id"]
-        channel = guild.get_channel(channel_id)
-        if channel:
-            try:
-                inviter = "Невідомо"
-                if used_invite and used_invite.inviter:
-                    inviter = used_invite.inviter.mention
-                role_info = "Не призначено"
-                if assigned_role:
-                    role_info = assigned_role.mention
-                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
-                embed = discord.Embed(
-                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
-                    color=discord.Color.green(),
-                    timestamp=kyiv_time
-                )
-                embed.set_thumbnail(url=member.display_avatar.url)
-                embed.add_field(
-                    name="Користувач",
-                    value=f"{member.mention}\n{member.display_name}",
-                    inline=True
-                )
-                embed.add_field(
-                    name="Запросив",
-                    value=inviter,
-                    inline=True
-                )
-                embed.add_field(
-                    name="Призначена роль",
-                    value=role_info,
-                    inline=False
-                )
-                embed.add_field(
-                    name="Дата реєстрації в Discord",
-                    value=member.created_at.strftime("%d.%m.%Y"),
-                    inline=False
-                )
-                embed.set_footer(
-                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
-                    icon_url=guild.icon.url if guild.icon else None
-                )
-                await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Помилка при відправці привітання: {e}")
-
-@bot.event
-async def on_invite_create(invite):
-    await update_invite_cache(invite.guild)
-
-@bot.event
-async def on_invite_delete(invite):
-    await update_invite_cache(invite.guild)
-
-@bot.event
-async def on_ready():
-    print(f'Бот {bot.user} онлайн!')
-    kyiv_tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(kyiv_tz)
-    print(f"Поточний час (Київ): {now}")
-    for guild in bot.guilds:
-        await update_invite_cache(guild)
-        guild_id = str(guild.id)
-        # WoT офіційні новини
-        if guild_id in wot_news_settings:
-            news = await fetch_wot_news()
-            if news:
-                wot_news_last_url[guild_id] = news[0]['link']
-        # Telegram Wotclue
-        if guild_id in wot_news_settings:
-            news = await fetch_telegram_wotclue_news()
-            if news:
-                wotclue_news_last_url[guild_id] = news[0]['link']
-        # Google News
-        if guild_id in wot_news_settings:
-            news = await fetch_rss_news(GOOGLE_NEWS_RSS)
-            if news:
-                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
-        # YouTube
-        if guild_id in wot_news_settings:
-            news = await fetch_rss_news(YOUTUBE_WOT_RSS)
-            if news:
-                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
-        # WoT Express
-        if guild_id in wot_news_settings:
-            news = await fetch_rss_news(WOTEXPRESS_RSS)
-            if news:
-                wot_external_news_last.setdefault(guild_id, set()).add(news[0]['link'])
-        # Telegram WoT UA
-        if guild_id in wot_news_settings:
-            news = await fetch_rss_news(WOT_UA_TELEGRAM_RSS)
-            if news:
-                wotua_news_last_url[guild_id] = news[0]['link']
-        # Telegram WOTCLUE EU
-        if guild_id in wot_news_settings:
-            news = await fetch_rss_news(WOTCLUE_EU_TELEGRAM_RSS)
-            if news:
-                wotclue_eu_news_last_url[guild_id] = news[0]['link']
-    try:
-        synced = await bot.tree.sync()
-        print(f"Синхронізовано {len(synced)} команд")
-    except Exception as e:
-        print(f"Помилка синхронізації: {e}")
-    check_voice_activity.start()
-    update_voice_activity.start()
-    wot_news_autopost.start()
-    wot_official_news_task.start()
-    wot_external_news_task.start()
-    wot_external_news_publisher.start()
-    telegram_wotclue_news_task.start()
-    telegram_wotua_news_task.start()
-    telegram_wotclue_eu_news_task.start()
 
 if __name__ == '__main__':
     print("Запуск бота...")
