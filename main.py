@@ -1462,6 +1462,21 @@ async def untrack_telegram(interaction: discord.Interaction, telegram: str):
     save_telegram_channels()
     await interaction.response.send_message(f"✅ Telegram-канал `{telegram}` видалено з автопосту", ephemeral=True)
 
+@bot.tree.command(name="list_tracked_telegram", description="Список Telegram-каналів, які відстежуються на цьому сервері")
+async def list_tracked_telegram(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    if guild_id not in telegram_channels or not telegram_channels[guild_id]:
+        return await interaction.response.send_message("ℹ️ На цьому сервері не відстежується жодного Telegram-каналу.", ephemeral=True)
+    lines = []
+    for entry in telegram_channels[guild_id]:
+        channel = interaction.guild.get_channel(entry['discord_channel'])
+        channel_mention = channel.mention if channel else f"ID: {entry['discord_channel']}"
+        lines.append(f"• @{entry['telegram']} → {channel_mention}")
+    msg = "**Відстежувані Telegram-канали:**\n" + "\n".join(lines)
+    await interaction.response.send_message(msg, ephemeral=True)
+
 if __name__ == '__main__':
     print("Запуск бота...")
     bot.run(TOKEN) 
