@@ -1320,8 +1320,8 @@ WOTCLUE_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue"
 async def fetch_telegram_wotclue_news():
     return await fetch_rss_news(WOTCLUE_TELEGRAM_RSS)
     
- async def fetch_telegram_worldoftanksua_official_news():
-    return await fetch_rss_news(worldoftanksua_official_RSS)   
+async def fetch_telegram_worldoftanksua_official_news():
+    return await fetch_rss_news(worldoftanksua_official_RSS)
 
 # Публікація новин з черги з рандомною затримкою
 @tasks.loop(minutes=10)
