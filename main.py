@@ -300,6 +300,7 @@ async def on_ready():
     telegram_wotclue_news_task.start()
     telegram_wotua_news_task.start()
     telegram_wotclue_eu_news_task.start()
+    telegram_channels_autopost.start()
 
 # ========== КОМАНДИ ==========
 
@@ -1295,8 +1296,7 @@ wot_external_news_last = {}  # guild_id: set(url)
 external_news_queue = []  # [{'guild_id':..., 'entry':...}]
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q=World+of+Tanks&hl=uk&gl=UA&ceid=UA:uk"
-YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCh554z2-7vIA-Mf9qAameoA"  # Офіційний WoT Official
-WOTEXPRESS_RSS = "https://wotexpress.info/rss/news/"
+#YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCh554z2-7vIA-Mf9qAameoA"  # Офіційний WoT Official
 WOT_UA_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/worldoftanksua_official"
 WOTCLUE_EU_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue_eu"
 wotclue_eu_news_last_url = {}  # guild_id: last_news_url
@@ -1319,6 +1319,9 @@ WOTCLUE_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue"
 
 async def fetch_telegram_wotclue_news():
     return await fetch_rss_news(WOTCLUE_TELEGRAM_RSS)
+    
+ async def fetch_telegram_worldoftanksua_official_news():
+    return await fetch_rss_news(worldoftanksua_official_RSS)   
 
 # Публікація новин з черги з рандомною затримкою
 @tasks.loop(minutes=10)
@@ -1357,6 +1360,107 @@ def clean_html(raw_html):
 def extract_links(html):
     # Пошук усіх <a href="...">текст</a>
     return re.findall(r'<a\s+href=[\'\"](.*?)[\'\"].*?>(.*?)<\/a>', html)
+
+# === ДОДАТКОВІ СТРУКТУРИ ДЛЯ TELEGRAM-КАНАЛІВ ===
+TELEGRAM_CHANNELS_FILE = 'telegram_channels.json'
+telegram_channels = {}  # {guild_id: [{telegram: str, discord_channel: int, last_url: str}]}
+
+def load_telegram_channels():
+    try:
+        with open(TELEGRAM_CHANNELS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_telegram_channels():
+    with open(TELEGRAM_CHANNELS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(telegram_channels, f, ensure_ascii=False, indent=2)
+
+telegram_channels = load_telegram_channels()
+
+# === КОМАНДА ДЛЯ ДОДАВАННЯ TELEGRAM-КАНАЛУ ===
+@bot.tree.command(name="track_telegram", description="Відстежувати Telegram-канал і постити новини у Discord-канал")
+@app_commands.describe(telegram="Username або посилання на Telegram-канал (без @)", channel="Канал для постингу новин")
+async def track_telegram(interaction: discord.Interaction, telegram: str, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    # Формуємо RSS-лінк
+    telegram = telegram.strip().replace('@', '')
+    rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
+    if guild_id not in telegram_channels:
+        telegram_channels[guild_id] = []
+    # Перевірка на дубль
+    for entry in telegram_channels[guild_id]:
+        if entry['telegram'].lower() == telegram.lower():
+            return await interaction.response.send_message(f"❌ Цей канал вже відстежується у цьому сервері!", ephemeral=True)
+    telegram_channels[guild_id].append({
+        'telegram': telegram,
+        'rss_url': rss_url,
+        'discord_channel': channel.id,
+        'last_url': ''
+    })
+    save_telegram_channels()
+    await interaction.response.send_message(f"✅ Додано відстеження Telegram-каналу: `{telegram}`. Новини будуть поститись у {channel.mention}", ephemeral=True)
+
+# === ТАСК ДЛЯ ПЕРЕВІРКИ ВСІХ TELEGRAM-КАНАЛІВ ===
+@tasks.loop(minutes=3)
+async def telegram_channels_autopost():
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in telegram_channels:
+            continue
+        for entry in telegram_channels[guild_id]:
+            try:
+                news = await fetch_rss_news(entry['rss_url'])
+                if not news:
+                    continue
+                last_url = entry.get('last_url')
+                if not last_url:
+                    entry['last_url'] = news[0]['link']
+                    save_telegram_channels()
+                    continue
+                new_entries = []
+                for n in news:
+                    if n['link'] == last_url:
+                        break
+                    new_entries.append(n)
+                if not new_entries:
+                    continue
+                channel = guild.get_channel(entry['discord_channel'])
+                if not channel:
+                    continue
+                for n in reversed(new_entries):
+                    embed = discord.Embed(
+                        title=n['title'],
+                        url=n['link'],
+                        description=clean_html(n['summary']),
+                        color=discord.Color.teal(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.set_footer(text=f"Telegram | @{entry['telegram']}")
+                    await channel.send(embed=embed)
+                    entry['last_url'] = n['link']
+                save_telegram_channels()
+            except Exception as e:
+                print(f"[Telegram Autopost] Error for {entry['telegram']}: {e}")
+
+@bot.tree.command(name="untrack_telegram", description="Видалити Telegram-канал з автопосту для цього сервера")
+@app_commands.describe(telegram="Username або посилання на Telegram-канал (без @)")
+async def untrack_telegram(interaction: discord.Interaction, telegram: str):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    telegram = telegram.strip().replace('@', '')
+    if guild_id not in telegram_channels or not telegram_channels[guild_id]:
+        return await interaction.response.send_message("❌ Для цього сервера не відстежується жодного Telegram-каналу", ephemeral=True)
+    before = len(telegram_channels[guild_id])
+    telegram_channels[guild_id] = [entry for entry in telegram_channels[guild_id] if entry['telegram'].lower() != telegram.lower()]
+    after = len(telegram_channels[guild_id])
+    if before == after:
+        return await interaction.response.send_message(f"❌ Канал `{telegram}` не знайдено серед відстежуваних", ephemeral=True)
+    save_telegram_channels()
+    await interaction.response.send_message(f"✅ Telegram-канал `{telegram}` видалено з автопосту", ephemeral=True)
 
 if __name__ == '__main__':
     print("Запуск бота...")
