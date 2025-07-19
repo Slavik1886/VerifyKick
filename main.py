@@ -1314,6 +1314,12 @@ async def fetch_rss_news(url):
         })
     return news
 
+# Додаю функцію для отримання новин з Telegram Wotclue
+WOTCLUE_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue"
+
+async def fetch_telegram_wotclue_news():
+    return await fetch_rss_news(WOTCLUE_TELEGRAM_RSS)
+
 # Публікація новин з черги з рандомною затримкою
 @tasks.loop(minutes=10)
 async def wot_external_news_publisher():
