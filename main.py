@@ -1275,17 +1275,6 @@ async def telegram_channels_autopost():
                     if n.get('image'):
                         embed.set_image(url=n['image'])
                     embed.set_footer(text=f"Telegram | @{entry['telegram']}")
-                    if n.get('image'):
-                        try:
-                            img_resp = requests.get(n['image'], headers={"User-Agent": "Mozilla/5.0"})
-                            if img_resp.status_code == 200:
-                                img_bytes = io.BytesIO(img_resp.content)
-                                img_bytes.seek(0)
-                                file = discord.File(img_bytes, filename="image.jpg")
-                                await channel.send(embed=embed, file=file)
-                                continue  # Пропустити стандартне надсилання нижче
-                        except Exception as e:
-                            print(f"[ERROR] Не вдалося завантажити картинку: {e}")
                     await channel.send(embed=embed)
                     entry['last_url'] = n['link']
                 save_telegram_channels()
