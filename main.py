@@ -1339,11 +1339,26 @@ async def telegram_channels_autopost():
         for entry in telegram_channels[guild_id]:
             try:
                 news = await fetch_rss_news(entry['rss_url'])
+                print(f"[DEBUG] Checking {entry['telegram']} ({entry['rss_url']})")
+                print(f"[DEBUG] Fetched {len(news)} news items")
                 if not news:
                     continue
                 last_url = entry.get('last_url')
+                print(f"[DEBUG] last_url: {last_url}")
                 if not last_url:
                     entry['last_url'] = news[0]['link']
+                    channel = guild.get_channel(entry['discord_channel'])
+                    if channel:
+                        embed = discord.Embed(
+                            title=news[0]['title'],
+                            url=news[0]['link'],
+                            description=clean_html(news[0]['summary']),
+                            color=discord.Color.teal(),
+                            timestamp=datetime.utcnow()
+                        )
+                        embed.set_footer(text=f"Telegram | @{entry['telegram']}")
+                        await channel.send(embed=embed)
+                        print(f"[DEBUG] Sent first news for {entry['telegram']} to Discord.")
                     save_telegram_channels()
                     continue
                 new_entries = []
