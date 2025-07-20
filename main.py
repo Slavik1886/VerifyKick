@@ -1114,12 +1114,18 @@ async def fetch_rss_news(url):
     feed = feedparser.parse(resp.content)
     news = []
     for entry in feed.entries:
+        # Спроба взяти картинку з media_content
+        image = entry.media_content[0]['url'] if 'media_content' in entry and entry.media_content else None
+        # Якщо немає, спробувати дістати з <img src=...> у summary/description
+        if not image:
+            html = entry.summary if 'summary' in entry else entry.get('description', '')
+            image = extract_first_img_src(html)
         news.append({
             'title': entry.title,
             'link': entry.link,
             'summary': entry.summary if 'summary' in entry else '',
             'published': entry.published if 'published' in entry else '',
-            'image': entry.media_content[0]['url'] if 'media_content' in entry and entry.media_content else None
+            'image': image
         })
     return news
 
@@ -1136,6 +1142,10 @@ def clean_html(raw_html):
 def extract_links(html):
     # Пошук усіх <a href="...">текст</a>
     return re.findall(r'<a\s+href=[\'\"](.*?)[\'\"].*?>(.*?)<\/a>', html)
+
+def extract_first_img_src(html):
+    match = re.search(r'<img[^>]+src=["\']([^"\']+)', html or "")
+    return match.group(1) if match else None
 
 # === ДОДАТКОВІ СТРУКТУРИ ДЛЯ TELEGRAM-КАНАЛІВ ===
 TELEGRAM_CHANNELS_FILE = 'telegram_channels.json'
@@ -1238,6 +1248,8 @@ async def telegram_channels_autopost():
                         color=discord.Color.teal(),
                         timestamp=datetime.utcnow()
                     )
+                    if n.get('image'):
+                        embed.set_image(url=n['image'])
                     embed.set_footer(text=f"Telegram | @{entry['telegram']}")
                     await channel.send(embed=embed)
                     entry['last_url'] = n['link']
