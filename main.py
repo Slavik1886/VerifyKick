@@ -259,9 +259,9 @@ async def on_ready():
         print(f"Помилка синхронізації: {e}")
     check_voice_activity.start()
     update_voice_activity.start()
-    telegram_wotclue_news_task.start()
-    telegram_wotua_news_task.start()
-    telegram_wotclue_eu_news_task.start()
+    # telegram_wotclue_news_task.start()
+    # telegram_wotua_news_task.start()
+    # telegram_wotclue_eu_news_task.start()
     telegram_channels_autopost.start()
 
 # ========== КОМАНДИ ==========
@@ -692,115 +692,115 @@ async def request_join(interaction: discord.Interaction):
 # ТЕПЕР ПУБЛІКАЦІЯ НОВИН ВІДБУВАЄТЬСЯ ЛИШЕ ЧЕРЕЗ telegram_channels_autopost І /track_telegram
 
 # Telegram Wotclue новини
-@tasks.loop(minutes=10)
-async def telegram_wotclue_news_task():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
-        try:
-            news = await fetch_telegram_wotclue_news()
-            if not news:
-                continue
-            last_url = wotclue_news_last_url.get(guild_id)
-            if not last_url:
-                wotclue_news_last_url[guild_id] = news[0]['link']
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] == last_url:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.teal(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="Wotclue EU | Telegram")
-                await channel.send(embed=embed)
-                wotclue_news_last_url[guild_id] = entry['link']
-        except Exception as e:
-            print(f"[Telegram Wotclue News] Error: {e}")
+# @tasks.loop(minutes=10)
+# async def telegram_wotclue_news_task():
+#     for guild in bot.guilds:
+#         guild_id = str(guild.id)
+#         if guild_id not in wot_news_settings:
+#             continue
+#         channel = guild.get_channel(wot_news_settings[guild_id])
+#         if not channel:
+#             continue
+#         try:
+#             news = await fetch_telegram_wotclue_news()
+#             if not news:
+#                 continue
+#             last_url = wotclue_news_last_url.get(guild_id)
+#             if not last_url:
+#                 wotclue_news_last_url[guild_id] = news[0]['link']
+#                 continue
+#             new_entries = []
+#             for entry in news:
+#                 if entry['link'] == last_url:
+#                     break
+#                 new_entries.append(entry)
+#             for entry in reversed(new_entries):
+#                 embed = discord.Embed(
+#                     title=entry['title'],
+#                     url=entry['link'],
+#                     description=clean_html(entry['summary']),
+#                     color=discord.Color.teal(),
+#                     timestamp=datetime.utcnow()
+#                 )
+#                 embed.set_footer(text="Wotclue EU | Telegram")
+#                 await channel.send(embed=embed)
+#                 wotclue_news_last_url[guild_id] = entry['link']
+#         except Exception as e:
+#             print(f"[Telegram Wotclue News] Error: {e}")
 
 # Telegram WoT UA новини
-@tasks.loop(minutes=10)
-async def telegram_wotua_news_task():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
-        try:
-            news = await fetch_rss_news(WOT_UA_TELEGRAM_RSS)
-            if not news:
-                continue
-            last_url = wotua_news_last_url.get(guild_id)
-            if not last_url:
-                wotua_news_last_url[guild_id] = news[0]['link']
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] == last_url:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.teal(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="World of Tanks Ukraine | Telegram")
-                await channel.send(embed=embed)
-                wotua_news_last_url[guild_id] = entry['link']
-        except Exception as e:
-            print(f"[Telegram WoT UA News] Error: {e}")
+# @tasks.loop(minutes=10)
+# async def telegram_wotua_news_task():
+#     for guild in bot.guilds:
+#         guild_id = str(guild.id)
+#         if guild_id not in wot_news_settings:
+#             continue
+#         channel = guild.get_channel(wot_news_settings[guild_id])
+#         if not channel:
+#             continue
+#         try:
+#             news = await fetch_rss_news(WOT_UA_TELEGRAM_RSS)
+#             if not news:
+#                 continue
+#             last_url = wotua_news_last_url.get(guild_id)
+#             if not last_url:
+#                 wotua_news_last_url[guild_id] = news[0]['link']
+#                 continue
+#             new_entries = []
+#             for entry in news:
+#                 if entry['link'] == last_url:
+#                     break
+#                 new_entries.append(entry)
+#             for entry in reversed(new_entries):
+#                 embed = discord.Embed(
+#                     title=entry['title'],
+#                     url=entry['link'],
+#                     description=clean_html(entry['summary']),
+#                     color=discord.Color.teal(),
+#                     timestamp=datetime.utcnow()
+#                 )
+#                 embed.set_footer(text="World of Tanks Ukraine | Telegram")
+#                 await channel.send(embed=embed)
+#                 wotua_news_last_url[guild_id] = entry['link']
+#         except Exception as e:
+#             print(f"[Telegram WoT UA News] Error: {e}")
 
 # Telegram WOTCLUE EU новини
-@tasks.loop(minutes=10)
-async def telegram_wotclue_eu_news_task():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
-        try:
-            news = await fetch_rss_news(WOTCLUE_EU_TELEGRAM_RSS)
-            if not news:
-                continue
-            last_url = wotclue_eu_news_last_url.get(guild_id)
-            if not last_url:
-                wotclue_eu_news_last_url[guild_id] = news[0]['link']
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] == last_url:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.teal(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="WOTCLUE EU | Telegram")
-                await channel.send(embed=embed)
-                wotclue_eu_news_last_url[guild_id] = entry['link']
-        except Exception as e:
-            print(f"[Telegram WOTCLUE EU News] Error: {e}")
+# @tasks.loop(minutes=10)
+# async def telegram_wotclue_eu_news_task():
+#     for guild in bot.guilds:
+#         guild_id = str(guild.id)
+#         if guild_id not in wot_news_settings:
+#             continue
+#         channel = guild.get_channel(wot_news_settings[guild_id])
+#         if not channel:
+#             continue
+#         try:
+#             news = await fetch_rss_news(WOTCLUE_EU_TELEGRAM_RSS)
+#             if not news:
+#                 continue
+#             last_url = wotclue_eu_news_last_url.get(guild_id)
+#             if not last_url:
+#                 wotclue_eu_news_last_url[guild_id] = news[0]['link']
+#                 continue
+#             new_entries = []
+#             for entry in news:
+#                 if entry['link'] == last_url:
+#                     break
+#                 new_entries.append(entry)
+#             for entry in reversed(new_entries):
+#                 embed = discord.Embed(
+#                     title=entry['title'],
+#                     url=entry['link'],
+#                     description=clean_html(entry['summary']),
+#                     color=discord.Color.teal(),
+#                     timestamp=datetime.utcnow()
+#                 )
+#                 embed.set_footer(text="WOTCLUE EU | Telegram")
+#                 await channel.send(embed=embed)
+#                 wotclue_eu_news_last_url[guild_id] = entry['link']
+#         except Exception as e:
+#             print(f"[Telegram WOTCLUE EU News] Error: {e}")
 
 # ========== ДОДАТКОВІ АДМІН-КОМАНДИ ========== 
 
