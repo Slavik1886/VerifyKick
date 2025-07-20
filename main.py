@@ -181,7 +181,7 @@ async def on_member_join(member):
                         assigned_role = role
                         print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
                     except discord.Forbidden:
-                        print(f"Немає дозволу надавати роль {role.name}")
+                        print(f"Немає дозволу на давати роль {role.name}")
                     except Exception as e:
                         print(f"Помилка надання ролі: {e}")
     except Exception as e:
@@ -720,43 +720,56 @@ async def fetch_wot_news():
         })
     return news
 
-# WoT офіційні новини
+# === УНІВЕРСАЛЬНА ФУНКЦІЯ ДЛЯ АВТОПОСТУ RSS-НОВИН ===
+async def post_rss_news_to_discord(guild, channel_id, rss_url, last_url_dict, color, footer_text):
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        # Видаляємо неактуальний канал з налаштувань
+        for d in [wot_news_settings, telegram_channels]:
+            if str(guild.id) in d and channel_id in d.get(str(guild.id), []):
+                d[str(guild.id)].remove(channel_id)
+        return
+    news = await fetch_rss_news(rss_url)
+    if not news:
+        return
+    guild_id = str(guild.id)
+    last_url = last_url_dict.get(guild_id)
+    if not last_url:
+        last_url_dict[guild_id] = news[0]['link']
+        return
+    new_entries = []
+    for entry in news:
+        if entry['link'] == last_url:
+            break
+        new_entries.append(entry)
+    for entry in reversed(new_entries):
+        embed = discord.Embed(
+            title=entry['title'],
+            url=entry['link'],
+            description=clean_html(entry['summary']),
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text=footer_text)
+        await channel.send(embed=embed)
+        last_url_dict[guild_id] = entry['link']
+
+# === ОНОВЛЕНІ ТАСКИ ДЛЯ НОВИН ===
 @tasks.loop(minutes=2)
 async def wot_official_news_task():
     for guild in bot.guilds:
         guild_id = str(guild.id)
         if guild_id not in wot_news_settings:
             continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
-        try:
-            news = await fetch_wot_news()
-            if not news:
-                continue
-            last_url = wot_news_last_url.get(guild_id)
-            if not last_url:
-                wot_news_last_url[guild_id] = news[0]['link']
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] == last_url:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.orange()
-                )
-                embed.set_footer(text="World of Tanks | Офіційна новина")
-                await channel.send(embed=embed)
-                wot_news_last_url[guild_id] = entry['link']
-        except Exception as e:
-            print(f"[WoT Official News] Error for guild {guild_id}: {e}")
+        await post_rss_news_to_discord(
+            guild,
+            wot_news_settings[guild_id],
+            WOT_RSS_URL,
+            wot_news_last_url,
+            discord.Color.orange(),
+            "World of Tanks | Офіційна новина"
+        )
 
-# WoT автопост
 @tasks.loop(minutes=60)
 async def wot_news_autopost():
     await asyncio.sleep(random.randint(0, 7200))
@@ -764,127 +777,64 @@ async def wot_news_autopost():
         guild_id = str(guild.id)
         if guild_id not in wot_news_settings:
             continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
-        try:
-            news = await fetch_wot_news()
-            if not news:
-                continue
-            last_url = wot_news_last_url.get(guild_id)
-            if not last_url:
-                wot_news_last_url[guild_id] = news[0]['link']
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] == last_url:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.orange()
-                )
-                embed.set_footer(text="World of Tanks | Автооновлення новин")
-                await channel.send(embed=embed)
-                wot_news_last_url[guild_id] = entry['link']
-                break  # Надсилаємо лише одну новину за цикл
-        except Exception as e:
-            print(f"[WoT News] Error for guild {guild_id}: {e}")
+        await post_rss_news_to_discord(
+            guild,
+            wot_news_settings[guild_id],
+            WOT_RSS_URL,
+            wot_news_last_url,
+            discord.Color.orange(),
+            "World of Tanks | Автооновлення новин"
+        )
 
-# WoT зовнішні новини (Google News, YouTube, WoT Express)
 @tasks.loop(minutes=15)
 async def wot_external_news_task():
     for guild in bot.guilds:
         guild_id = str(guild.id)
         if guild_id not in wot_news_settings:
             continue
-        channel = guild.get_channel(wot_news_settings[guild_id])
-        if not channel:
-            continue
         # Google News
-        try:
-            news = await fetch_rss_news(GOOGLE_NEWS_RSS)
-            last_urls = wot_external_news_last.setdefault(guild_id, set())
-            if not news:
-                continue
-            if not last_urls:
-                last_urls.add(news[0]['link'])
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] in last_urls:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="World of Tanks | Новина з інтернету")
-                await channel.send(embed=embed)
-                last_urls.add(entry['link'])
-        except Exception as e:
-            print(f"[Google News] Error: {e}")
+        await post_rss_news_to_discord(
+            guild,
+            wot_news_settings[guild_id],
+            GOOGLE_NEWS_RSS,
+            wot_external_news_last.setdefault(guild_id, set()),
+            discord.Color.blue(),
+            "World of Tanks | Новина з інтернету"
+        )
         # YouTube
-        try:
-            news = await fetch_rss_news(YOUTUBE_WOT_RSS)
-            last_urls = wot_external_news_last.setdefault(guild_id, set())
-            if not news:
-                continue
-            if not last_urls:
-                last_urls.add(news[0]['link'])
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] in last_urls:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="World of Tanks | Новина з інтернету")
-                await channel.send(embed=embed)
-                last_urls.add(entry['link'])
-        except Exception as e:
-            print(f"[YouTube] Error: {e}")
+        await post_rss_news_to_discord(
+            guild,
+            wot_news_settings[guild_id],
+            YOUTUBE_WOT_RSS,
+            wot_external_news_last.setdefault(guild_id, set()),
+            discord.Color.blue(),
+            "World of Tanks | Новина з інтернету"
+        )
         # WoT Express
-        try:
-            news = await fetch_rss_news(WOTEXPRESS_RSS)
-            last_urls = wot_external_news_last.setdefault(guild_id, set())
-            if not news:
-                continue
-            if not last_urls:
-                last_urls.add(news[0]['link'])
-                continue
-            new_entries = []
-            for entry in news:
-                if entry['link'] in last_urls:
-                    break
-                new_entries.append(entry)
-            for entry in reversed(new_entries):
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
-                )
-                embed.set_footer(text="World of Tanks | Новина з інтернету")
-                await channel.send(embed=embed)
-                last_urls.add(entry['link'])
-        except Exception as e:
-            print(f"[WoT Express] Error: {e}")
+        await post_rss_news_to_discord(
+            guild,
+            wot_news_settings[guild_id],
+            WOTEXPRESS_RSS,
+            wot_external_news_last.setdefault(guild_id, set()),
+            discord.Color.blue(),
+            "World of Tanks | Новина з інтернету"
+        )
+
+@tasks.loop(minutes=3)
+async def telegram_channels_autopost():
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in telegram_channels:
+            continue
+        for entry in telegram_channels[guild_id]:
+            await post_rss_news_to_discord(
+                guild,
+                entry['discord_channel'],
+                entry['rss_url'],
+                entry,
+                discord.Color.teal(),
+                f"Telegram | @{entry['telegram']}"
+            )
 
 # Telegram Wotclue новини
 @tasks.loop(minutes=10)
@@ -1296,7 +1246,7 @@ wot_external_news_last = {}  # guild_id: set(url)
 external_news_queue = []  # [{'guild_id':..., 'entry':...}]
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q=World+of+Tanks&hl=uk&gl=UA&ceid=UA:uk"
-#YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCh554z2-7vIA-Mf9qAameoA"  # Офіційний WoT Official
+YOUTUBE_WOT_RSS = "https://www.youtube.com/feeds/videos.xml?channel_id=UCh554z2-7vIA-Mf9qAameoA"  # Офіційний WoT Official
 WOT_UA_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/worldoftanksua_official"
 WOTCLUE_EU_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue_eu"
 wotclue_eu_news_last_url = {}  # guild_id: last_news_url
@@ -1320,39 +1270,6 @@ WOTCLUE_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue"
 async def fetch_telegram_wotclue_news():
     return await fetch_rss_news(WOTCLUE_TELEGRAM_RSS)
     
-async def fetch_telegram_worldoftanksua_official_news():
-    return await fetch_rss_news(worldoftanksua_official_RSS)
-
-# Публікація новин з черги з рандомною затримкою
-@tasks.loop(minutes=10)
-async def wot_external_news_publisher():
-    if not external_news_queue:
-        return
-    item = external_news_queue.pop(0)
-    guild_id = item['guild_id']
-    entry = item['entry']
-    channel_id = wot_news_settings.get(guild_id)
-    if not channel_id:
-        return
-    for guild in bot.guilds:
-        if str(guild.id) == guild_id:
-            channel = guild.get_channel(channel_id)
-            if channel:
-                embed = discord.Embed(
-                    title=entry['title'],
-                    url=entry['link'],
-                    description=clean_html(entry['summary']),
-                    color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
-                )
-                # НЕ додаємо поля з посиланнями
-                embed.set_footer(text="World of Tanks | Новина з інтернету")
-                # Рандомна затримка перед публікацією
-                delay = random.randint(3600, 10800)  # 1-3 години
-                bot.loop.create_task(asyncio.sleep(delay))
-                bot.loop.create_task(channel.send(embed=embed))
-            break
-
 def clean_html(raw_html):
     clean_text = re.sub('<.*?>', '', raw_html)
     return unescape(clean_text).strip()
@@ -1386,8 +1303,17 @@ async def track_telegram(interaction: discord.Interaction, telegram: str, channe
         return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
     guild_id = str(interaction.guild.id)
     # Формуємо RSS-лінк
-    telegram = telegram.strip().replace('@', '')
-    rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
+    telegram = telegram.strip()
+    # Вирізаємо https://, http://, t.me/, @
+    telegram = re.sub(r'^(https?:\/\/)?(t\.me\/)?@?', '', telegram, flags=re.IGNORECASE)
+    # Якщо це інвайт-код (починається з + або joinchat)
+    if telegram.startswith('+') or telegram.lower().startswith('joinchat/'):
+        # Для t.me/+xxxx або t.me/joinchat/xxxx
+        telegram = telegram.replace('joinchat/', '+')
+        rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
+    else:
+        # Для username
+        rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
     if guild_id not in telegram_channels:
         telegram_channels[guild_id] = []
     # Перевірка на дубль
@@ -1451,7 +1377,17 @@ async def untrack_telegram(interaction: discord.Interaction, telegram: str):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
     guild_id = str(interaction.guild.id)
-    telegram = telegram.strip().replace('@', '')
+    telegram = telegram.strip()
+    # Вирізаємо https://, http://, t.me/, @
+    telegram = re.sub(r'^(https?:\/\/)?(t\.me\/)?@?', '', telegram, flags=re.IGNORECASE)
+    # Якщо це інвайт-код (починається з + або joinchat)
+    if telegram.startswith('+') or telegram.lower().startswith('joinchat/'):
+        # Для t.me/+xxxx або t.me/joinchat/xxxx
+        telegram = telegram.replace('joinchat/', '+')
+        rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
+    else:
+        # Для username
+        rss_url = f"https://rsshub.app/telegram/channel/{telegram}"
     if guild_id not in telegram_channels or not telegram_channels[guild_id]:
         return await interaction.response.send_message("❌ Для цього сервера не відстежується жодного Telegram-каналу", ephemeral=True)
     before = len(telegram_channels[guild_id])
