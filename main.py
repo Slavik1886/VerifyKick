@@ -15,6 +15,7 @@ import feedparser
 import re
 from html import unescape
 import requests
+import io
 
 intents = discord.Intents.default()
 intents.members = True
@@ -1218,14 +1219,31 @@ async def telegram_channels_autopost():
                     entry['last_url'] = news[0]['link']
                     channel = guild.get_channel(entry['discord_channel'])
                     if channel:
+                        # Витягуємо текст поста
+                        post_text = news[0]['summary'] or news[0]['description'] or ''
+                        post_text = clean_html(post_text).strip()
+                        if not post_text:
+                            post_text = news[0]['title']
+
                         embed = discord.Embed(
                             title=news[0]['title'],
                             url=news[0]['link'],
-                            description=clean_html(news[0]['summary']),
+                            description=post_text,
                             color=discord.Color.teal(),
                             timestamp=datetime.utcnow()
                         )
                         embed.set_footer(text=f"Telegram | @{entry['telegram']}")
+                        if news[0].get('image'):
+                            try:
+                                img_resp = requests.get(news[0]['image'], headers={"User-Agent": "Mozilla/5.0"})
+                                if img_resp.status_code == 200:
+                                    img_bytes = io.BytesIO(img_resp.content)
+                                    img_bytes.seek(0)
+                                    file = discord.File(img_bytes, filename="image.jpg")
+                                    await channel.send(embed=embed, file=file)
+                                    continue  # Пропустити стандартне надсилання нижче
+                            except Exception as e:
+                                print(f"[ERROR] Не вдалося завантажити картинку: {e}")
                         await channel.send(embed=embed)
                         print(f"[DEBUG] Sent first news for {entry['telegram']} to Discord.")
                     save_telegram_channels()
@@ -1241,16 +1259,33 @@ async def telegram_channels_autopost():
                 if not channel:
                     continue
                 for n in reversed(new_entries):
+                    # Витягуємо текст поста
+                    post_text = n.get('summary') or n.get('description') or ''
+                    post_text = clean_html(post_text).strip()
+                    if not post_text:
+                        post_text = n.get('title', '')
+
                     embed = discord.Embed(
                         title=n['title'],
                         url=n['link'],
-                        description=clean_html(n['summary']),
+                        description=post_text,
                         color=discord.Color.teal(),
                         timestamp=datetime.utcnow()
                     )
                     if n.get('image'):
                         embed.set_image(url=n['image'])
                     embed.set_footer(text=f"Telegram | @{entry['telegram']}")
+                    if n.get('image'):
+                        try:
+                            img_resp = requests.get(n['image'], headers={"User-Agent": "Mozilla/5.0"})
+                            if img_resp.status_code == 200:
+                                img_bytes = io.BytesIO(img_resp.content)
+                                img_bytes.seek(0)
+                                file = discord.File(img_bytes, filename="image.jpg")
+                                await channel.send(embed=embed, file=file)
+                                continue  # Пропустити стандартне надсилання нижче
+                        except Exception as e:
+                            print(f"[ERROR] Не вдалося завантажити картинку: {e}")
                     await channel.send(embed=embed)
                     entry['last_url'] = n['link']
                 save_telegram_channels()
