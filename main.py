@@ -14,6 +14,7 @@ from discord.ui import View, Button, Modal, TextInput, Select
 import feedparser
 import re
 from html import unescape
+import requests
 
 intents = discord.Intents.default()
 intents.members = True
@@ -293,9 +294,6 @@ async def on_ready():
         print(f"Помилка синхронізації: {e}")
     check_voice_activity.start()
     update_voice_activity.start()
-    wot_news_autopost.start()
-    wot_official_news_task.start()
-    wot_external_news_task.start()
     telegram_wotclue_news_task.start()
     telegram_wotua_news_task.start()
     telegram_wotclue_eu_news_task.start()
@@ -692,148 +690,41 @@ async def request_join(interaction: discord.Interaction):
     await interaction.response.send_modal(JoinRequestModal())
 
 # ========== WoT NEWS AUTOPOST ========== 
-wot_news_settings = {}  # guild_id: channel_id
-wot_news_last_url = {}  # guild_id: last_news_url
-
-WOT_RSS_URL = "https://worldoftanks.eu/uk/rss/news/"
-
-@bot.tree.command(name="setup_wot_news", description="Вказати канал для автоматичних новин World of Tanks")
-@app_commands.describe(channel="Канал для новин")
-async def setup_wot_news(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Тільки для адміністраторів", ephemeral=True)
-        return
-    wot_news_settings[str(interaction.guild.id)] = channel.id
-    await interaction.response.send_message(f"✅ Канал для WoT новин встановлено: {channel.mention}", ephemeral=True)
-
-async def fetch_wot_news():
-    feed = feedparser.parse(WOT_RSS_URL)
-    news = []
-    for entry in feed.entries:
-        news.append({
-            'title': entry.title,
-            'link': entry.link,
-            'summary': entry.summary,
-            'published': entry.published if 'published' in entry else '',
-            'image': entry.media_content[0]['url'] if 'media_content' in entry and entry.media_content else None
-        })
-    return news
-
-# === УНІВЕРСАЛЬНА ФУНКЦІЯ ДЛЯ АВТОПОСТУ RSS-НОВИН ===
-async def post_rss_news_to_discord(guild, channel_id, rss_url, last_url_dict, color, footer_text):
-    channel = guild.get_channel(channel_id)
-    if not channel:
-        # Видаляємо неактуальний канал з налаштувань
-        for d in [wot_news_settings, telegram_channels]:
-            if str(guild.id) in d and channel_id in d.get(str(guild.id), []):
-                d[str(guild.id)].remove(channel_id)
-        return
-    news = await fetch_rss_news(rss_url)
-    if not news:
-        return
-    guild_id = str(guild.id)
-    last_url = last_url_dict.get(guild_id)
-    if not last_url:
-        last_url_dict[guild_id] = news[0]['link']
-        return
-    new_entries = []
-    for entry in news:
-        if entry['link'] == last_url:
-            break
-        new_entries.append(entry)
-    for entry in reversed(new_entries):
-        embed = discord.Embed(
-            title=entry['title'],
-            url=entry['link'],
-            description=clean_html(entry['summary']),
-            color=color,
-            timestamp=datetime.utcnow()
-        )
-        embed.set_footer(text=footer_text)
-        await channel.send(embed=embed)
-        last_url_dict[guild_id] = entry['link']
-
-# === ОНОВЛЕНІ ТАСКИ ДЛЯ НОВИН ===
-@tasks.loop(minutes=2)
-async def wot_official_news_task():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        await post_rss_news_to_discord(
-            guild,
-            wot_news_settings[guild_id],
-            WOT_RSS_URL,
-            wot_news_last_url,
-            discord.Color.orange(),
-            "World of Tanks | Офіційна новина"
-        )
-
-@tasks.loop(minutes=60)
-async def wot_news_autopost():
-    await asyncio.sleep(random.randint(0, 7200))
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        await post_rss_news_to_discord(
-            guild,
-            wot_news_settings[guild_id],
-            WOT_RSS_URL,
-            wot_news_last_url,
-            discord.Color.orange(),
-            "World of Tanks | Автооновлення новин"
-        )
-
-@tasks.loop(minutes=15)
-async def wot_external_news_task():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in wot_news_settings:
-            continue
-        # Google News
-        await post_rss_news_to_discord(
-            guild,
-            wot_news_settings[guild_id],
-            GOOGLE_NEWS_RSS,
-            wot_external_news_last.setdefault(guild_id, set()),
-            discord.Color.blue(),
-            "World of Tanks | Новина з інтернету"
-        )
-        # YouTube
-        await post_rss_news_to_discord(
-            guild,
-            wot_news_settings[guild_id],
-            YOUTUBE_WOT_RSS,
-            wot_external_news_last.setdefault(guild_id, set()),
-            discord.Color.blue(),
-            "World of Tanks | Новина з інтернету"
-        )
-        # WoT Express
-        await post_rss_news_to_discord(
-            guild,
-            wot_news_settings[guild_id],
-            WOTEXPRESS_RSS,
-            wot_external_news_last.setdefault(guild_id, set()),
-            discord.Color.blue(),
-            "World of Tanks | Новина з інтернету"
-        )
-
-@tasks.loop(minutes=3)
-async def telegram_channels_autopost():
-    for guild in bot.guilds:
-        guild_id = str(guild.id)
-        if guild_id not in telegram_channels:
-            continue
-        for entry in telegram_channels[guild_id]:
-            await post_rss_news_to_discord(
-                guild,
-                entry['discord_channel'],
-                entry['rss_url'],
-                entry,
-                discord.Color.teal(),
-                f"Telegram | @{entry['telegram']}"
-            )
+# ВИДАЛЕНО ВСІ ТАСКИ ТА ФУНКЦІЇ ДЛЯ АВТОПОСТУ З ІНШИХ ДЖЕРЕЛ, КРІМ TELEGRAM
+# wot_news_settings = {}  # guild_id: channel_id
+# wot_news_last_url = {}  # guild_id: last_news_url
+# WOT_RSS_URL = "https://worldoftanks.eu/uk/rss/news/"
+# @bot.tree.command(name="setup_wot_news", description="Вказати канал для автоматичних новин World of Tanks")
+# ...
+# async def fetch_wot_news():
+#     ...
+# async def post_rss_news_to_discord(...):
+#     ...
+# @tasks.loop(minutes=2)
+# async def wot_official_news_task():
+#     ...
+# @tasks.loop(minutes=60)
+# async def wot_news_autopost():
+#     ...
+# @tasks.loop(minutes=15)
+# async def wot_external_news_task():
+#     ...
+# ...
+# ВИДАЛЕНО ВСІ ЇХ ВИКЛИКИ У on_ready
+# wot_news_autopost.start()
+# wot_official_news_task.start()
+# wot_external_news_task.start()
+# ...
+# ВИДАЛЕНО ВСІ ЗМІННІ, ЩО СТОСУЮТЬСЯ ЦИХ ДЖЕРЕЛ
+# GOOGLE_NEWS_RSS = ...
+# YOUTUBE_WOT_RSS = ...
+# WOT_UA_TELEGRAM_RSS = ...
+# WOTCLUE_EU_TELEGRAM_RSS = ...
+# wotclue_eu_news_last_url = ...
+# wot_external_news_last = ...
+# external_news_queue = ...
+# ...
+# ТЕПЕР ПУБЛІКАЦІЯ НОВИН ВІДБУВАЄТЬСЯ ЛИШЕ ЧЕРЕЗ telegram_channels_autopost І /track_telegram
 
 # Telegram Wotclue новини
 @tasks.loop(minutes=10)
@@ -1251,7 +1142,11 @@ WOTCLUE_EU_TELEGRAM_RSS = "https://rsshub.app/telegram/channel/Wotclue_eu"
 wotclue_eu_news_last_url = {}  # guild_id: last_news_url
 
 async def fetch_rss_news(url):
-    feed = feedparser.parse(url)
+    print(f"[DEBUG] GET {url}")
+    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    print(f"[DEBUG] Status: {resp.status_code}")
+    print(f"[DEBUG] Content: {resp.text[:500]}")  # Показати перші 500 символів
+    feed = feedparser.parse(resp.content)
     news = []
     for entry in feed.entries:
         news.append({
