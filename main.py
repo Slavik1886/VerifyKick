@@ -602,13 +602,36 @@ async def disable_welcome(interaction: discord.Interaction):
 MOD_CHANNEL_ID = 1318890524643557406  # <-- ID каналу для модерації заявок
 GUILD_INVITE_LINK = "https://discord.gg/yourinvite"  # <-- Вкажіть посилання на запрошення
 
+# === ДОДАТКОВІ СТРУКТУРИ ДЛЯ ЗМІНИ НІКУ ===
+NICK_NOTIFY_CHANNEL_FILE = 'nick_notify_channel.json'
+nick_notify_channel = {}  # {guild_id: channel_id}
+
+def load_nick_notify_channel():
+    try:
+        with open(NICK_NOTIFY_CHANNEL_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_nick_notify_channel():
+    with open(NICK_NOTIFY_CHANNEL_FILE, 'w', encoding='utf-8') as f:
+        json.dump(nick_notify_channel, f, ensure_ascii=False, indent=2)
+
+nick_notify_channel = load_nick_notify_channel()
+
+# Тимчасове зберігання ігрових ніків для заявок
+pending_nicknames = {}  # {user_id: nickname}
+
 class JoinRequestModal(Modal, title="Запит на приєднання"):
     reason = TextInput(label="Чому ви хочете приєднатися?", style=discord.TextStyle.paragraph, required=True, max_length=300)
+    nickname = TextInput(label="Ваш ігровий нік (WoT)", required=True, max_length=32)
     async def on_submit(self, interaction: discord.Interaction):
         mod_channel = interaction.client.get_channel(MOD_CHANNEL_ID)
         if not mod_channel:
             await interaction.response.send_message("Не знайдено канал для модерації заявок.", ephemeral=True)
             return
+        # Зберігаємо ігровий нік для user_id
+        pending_nicknames[interaction.user.id] = self.nickname.value.strip()
         embed = discord.Embed(
             title="Нова заявка на приєднання",
             color=discord.Color.blurple(),
@@ -616,6 +639,7 @@ class JoinRequestModal(Modal, title="Запит на приєднання"):
         )
         embed.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
         embed.add_field(name="Користувач", value=f"{interaction.user.mention} ({interaction.user.id})", inline=False)
+        embed.add_field(name="Ігровий нік", value=self.nickname.value.strip(), inline=False)
         embed.add_field(name="Відповідь", value=self.reason.value, inline=False)
         view = JoinRequestView(user_id=interaction.user.id, reason=self.reason.value)
         await mod_channel.send(embed=embed, view=view)
@@ -632,6 +656,22 @@ class JoinRequestView(View):
         if not user:
             await interaction.response.send_message("Користувача не знайдено.", ephemeral=True)
             return
+        # --- Зміна ніку та повідомлення у канал ---
+        guild = interaction.guild
+        guild_id = str(guild.id)
+        nickname = pending_nicknames.pop(self.user_id, None)
+        member = guild.get_member(self.user_id) if guild else None
+        notify_channel_id = nick_notify_channel.get(guild_id)
+        notify_channel = guild.get_channel(notify_channel_id) if notify_channel_id else None
+        try:
+            if member and nickname:
+                await member.edit(nick=nickname)
+                if notify_channel:
+                    await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
+        except Exception as e:
+            if notify_channel:
+                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention if member else self.user_id}: {e}")
+        # --- Кінець блоку ---
         try:
             await user.send(f"Ваша заявка схвалена! Ось запрошення: {GUILD_INVITE_LINK}")
             await interaction.response.send_message("Користувача повідомлено про схвалення.", ephemeral=True)
@@ -1322,6 +1362,16 @@ async def list_tracked_telegram(interaction: discord.Interaction):
         lines.append(f"• @{entry['telegram']} → {channel_mention}")
     msg = "**Відстежувані Telegram-канали:**\n" + "\n".join(lines)
     await interaction.response.send_message(msg, ephemeral=True)
+
+@bot.tree.command(name="set_nick_notify_channel", description="Встановити канал для повідомлень про зміну ніку")
+@app_commands.describe(channel="Канал для повідомлень")
+async def set_nick_notify_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    nick_notify_channel[guild_id] = channel.id
+    save_nick_notify_channel()
+    await interaction.response.send_message(f"✅ Канал для повідомлень про зміну ніку встановлено: {channel.mention}", ephemeral=True)
 
 if __name__ == '__main__':
     print("Запуск бота...")
