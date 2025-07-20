@@ -3,3 +3,4 @@ aiohttp==3.8.5
 pytz==2023.3
 humanize==4.6.0
 feedparser
+requests
