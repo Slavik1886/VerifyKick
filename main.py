@@ -296,7 +296,6 @@ async def on_ready():
     wot_news_autopost.start()
     wot_official_news_task.start()
     wot_external_news_task.start()
-    wot_external_news_publisher.start()
     telegram_wotclue_news_task.start()
     telegram_wotua_news_task.start()
     telegram_wotclue_eu_news_task.start()
