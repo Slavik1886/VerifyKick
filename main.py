@@ -164,131 +164,175 @@ async def on_voice_state_update(member, before, after):
             del voice_time_tracker[member_key]
             warning_sent.discard(member_key)
 
+MODERATION_INVITE_CODE = "habzhGR74r"  # Код запрошення, яке потребує модерації
+MODERATOR_ROLE_ID = 1359443269846700083  # ID ролі модератора
+
 @bot.event
 async def on_member_join(member):
     if member.bot:
         return
     
-    mod_channel = bot.get_channel(MOD_CHANNEL_ID)
-    if not mod_channel:
-        print(f"[ERROR] Не знайдено канал для модерації {MOD_CHANNEL_ID}")
-        return
+    guild = member.guild
+    assigned_role = None
 
-    # Створюємо форму для введення ніку
-    class NicknameModal(Modal, title="Вкажіть свій нікнейм"):
-        nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
-        
-        async def on_submit(self, interaction: discord.Interaction):
-            nickname_value = self.nickname.value.strip()
-            # Зберігаємо нік для подальшого використання
-            pending_nicknames[str(member.id)] = nickname_value
-            save_pending_nicknames()
-            
-            # Створюємо ембед для заявки
-            embed = discord.Embed(
-                title="Нова заявка на приєднання",
-                color=discord.Color.blurple(),
-                timestamp=datetime.utcnow()
-            )
-            embed.set_author(name=member.name, icon_url=member.display_avatar.url)
-            embed.add_field(name="Користувач", value=f"{member.mention} ({member.id})", inline=False)
-            embed.add_field(name="Бажаний нік", value=nickname_value, inline=False)
-            embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
-            
-            # Створюємо кнопки для модерації
-            class JoinRequestView(View):
-                def __init__(self):
-                    super().__init__(timeout=None)
-                
-                @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
-                async def approve(self, button_interaction: discord.Interaction, button: Button):
-                    # Видаємо роль відповідно до запрошення
-                    guild = button_interaction.guild
-                    assigned_role = None
-                    
-                    try:
-                        current_invites = await guild.invites()
-                        used_invite = None
-                        for invite in current_invites:
-                            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
-                            if invite.uses > cached_uses:
-                                used_invite = invite
-                                break
-                        
-                        if used_invite:
-                            await update_invite_cache(guild)
-                            guild_roles = invite_roles.get(str(guild.id), {})
-                            role_id = guild_roles.get(used_invite.code)
-                            
-                            if role_id:
-                                role = guild.get_role(role_id)
-                                if role:
-                                    await member.add_roles(role)
-                                    assigned_role = role
-                                    
-                                    # Змінюємо нік після схвалення
-                                    saved_nick = pending_nicknames.pop(str(member.id), None)
-                                    if saved_nick:
-                                        try:
-                                            await member.edit(nick=saved_nick)
-                                            save_pending_nicknames()
-                                            await button_interaction.response.send_message(
-                                                f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
-                                                ephemeral=True
-                                            )
-                                        except Exception as e:
-                                            await button_interaction.response.send_message(
-                                                f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
-                                                ephemeral=True
-                                            )
-                                    else:
-                                        await button_interaction.response.send_message(
-                                            f"✅ Користувача схвалено\nНадано роль {role.mention}",
-                                            ephemeral=True
-                                        )
-                    
-                    except Exception as e:
-                        await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
-                        return
-                    
-                    self.disable_all_items()
-                    await button_interaction.message.edit(view=self)
-                
-                @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
-                async def deny(self, button_interaction: discord.Interaction, button: Button):
-                    try:
-                        # Видаляємо збережений нік при відхиленні
-                        if str(member.id) in pending_nicknames:
-                            del pending_nicknames[str(member.id)]
-                            save_pending_nicknames()
-                        
-                        await member.kick(reason="Заявку відхилено")
-                        await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
-                    except Exception as e:
-                        await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
-                    
-                    self.disable_all_items()
-                    await button_interaction.message.edit(view=self)
-            
-            # Надсилаємо заявку в канал модерації
-            view = JoinRequestView()
-            await mod_channel.send(embed=embed, view=view)
-            await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
-
-    # Створюємо кнопку для введення ніку
-    class SetNicknameView(View):
-        def __init__(self):
-            super().__init__(timeout=None)
-
-        @discord.ui.button(label="Вказати нікнейм", style=discord.ButtonStyle.primary)
-        async def set_nickname(self, interaction: discord.Interaction, button: Button):
-            await interaction.response.send_modal(NicknameModal())
-
-    # Надсилаємо повідомлення з кнопкою
     try:
-        await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=SetNicknameView())
+        # Знаходимо запрошення, за яким зайшов користувач
+        current_invites = await guild.invites()
+        used_invite = None
+        for invite in current_invites:
+            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+            if invite.uses > cached_uses:
+                used_invite = invite
+                break
+
+        if used_invite:
+            await update_invite_cache(guild)
+            guild_roles = invite_roles.get(str(guild.id), {})
+            role_id = guild_roles.get(used_invite.code)
+
+            # Якщо це запрошення потребує модерації
+            if used_invite.code == MODERATION_INVITE_CODE:
+                mod_channel = bot.get_channel(MOD_CHANNEL_ID)
+                if not mod_channel:
+                    print(f"[ERROR] Не знайдено канал для модерації {MOD_CHANNEL_ID}")
+                    return
+
+                # Створюємо форму для введення ніку
+                class NicknameModal(Modal, title="Вкажіть свій нікнейм"):
+                    nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
+                    
+                    async def on_submit(self, interaction: discord.Interaction):
+                        nickname_value = self.nickname.value.strip()
+                        pending_nicknames[str(member.id)] = nickname_value
+                        save_pending_nicknames()
+                        
+                        embed = discord.Embed(
+                            title="Нова заявка на приєднання",
+                            color=discord.Color.blurple(),
+                            timestamp=datetime.utcnow()
+                        )
+                        embed.set_author(name=member.name, icon_url=member.display_avatar.url)
+                        embed.add_field(name="Користувач", value=f"{member.mention} ({member.id})", inline=False)
+                        embed.add_field(name="Бажаний нік", value=nickname_value, inline=False)
+                        embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
+                        
+                        # Створюємо кнопки для модерації
+                        class JoinRequestView(View):
+                            def __init__(self):
+                                super().__init__(timeout=None)
+
+                            def disable_buttons(self):
+                                for item in self.children:
+                                    item.disabled = True
+
+                            async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                                # Перевіряємо, чи має користувач роль модератора
+                                if not interaction.user.get_role(MODERATOR_ROLE_ID):
+                                    await interaction.response.send_message("❌ У вас немає прав на модерацію заявок", ephemeral=True)
+                                    return False
+                                return True
+
+                            @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
+                            async def approve(self, button_interaction: discord.Interaction, button: Button):
+                                # Видаємо роль відповідно до запрошення
+                                guild = button_interaction.guild
+                                assigned_role = None
+                                
+                                try:
+                                    current_invites = await guild.invites()
+                                    used_invite = None
+                                    for invite in current_invites:
+                                        cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+                                        if invite.uses > cached_uses:
+                                            used_invite = invite
+                                            break
+                                    
+                                    if used_invite:
+                                        await update_invite_cache(guild)
+                                        guild_roles = invite_roles.get(str(guild.id), {})
+                                        role_id = guild_roles.get(used_invite.code)
+                                        
+                                        if role_id:
+                                            role = guild.get_role(role_id)
+                                            if role:
+                                                await member.add_roles(role)
+                                                assigned_role = role
+                                                
+                                                # Змінюємо нік після схвалення
+                                                saved_nick = pending_nicknames.pop(str(member.id), None)
+                                                if saved_nick:
+                                                    try:
+                                                        await member.edit(nick=saved_nick)
+                                                        save_pending_nicknames()
+                                                        await button_interaction.response.send_message(
+                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
+                                                            ephemeral=True
+                                                        )
+                                                    except Exception as e:
+                                                        await button_interaction.response.send_message(
+                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
+                                                            ephemeral=True
+                                                        )
+                                                else:
+                                                    await button_interaction.response.send_message(
+                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}",
+                                                        ephemeral=True
+                                                    )
+                                    
+                                except Exception as e:
+                                    await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+                                    return
+                                
+                                # Деактивуємо кнопки
+                                self.disable_buttons()
+                                await button_interaction.message.edit(view=self)
+                            
+                            @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
+                            async def deny(self, button_interaction: discord.Interaction, button: Button):
+                                try:
+                                    # Видаляємо збережений нік при відхиленні
+                                    if str(member.id) in pending_nicknames:
+                                        del pending_nicknames[str(member.id)]
+                                        save_pending_nicknames()
+                                    
+                                    await member.kick(reason="Заявку відхилено")
+                                    await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
+                                except Exception as e:
+                                    await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+                                
+                                # Деактивуємо кнопки
+                                self.disable_buttons()
+                                await button_interaction.message.edit(view=self)
+                        
+                        view = JoinRequestView()
+                        await mod_channel.send(embed=embed, view=view)
+                        await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
+
+                # Створюємо кнопку для введення ніку
+                class SetNicknameView(View):
+                    def __init__(self):
+                        super().__init__(timeout=None)
+
+                    @discord.ui.button(label="Вказати нікнейм", style=discord.ButtonStyle.primary)
+                    async def set_nickname(self, interaction: discord.Interaction, button: Button):
+                        await interaction.response.send_modal(NicknameModal())
+
+                # Надсилаємо повідомлення з кнопкою
+                try:
+                    await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=SetNicknameView())
+                except Exception as e:
+                    print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
+
+            # Якщо це звичайне запрошення - просто видаємо роль
+            else:
+                if role_id:
+                    role = guild.get_role(role_id)
+                    if role:
+                        await member.add_roles(role)
+                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
+
     except Exception as e:
-        print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
+        print(f"[ERROR] Помилка обробки нового учасника: {e}")
 
 @bot.event
 async def on_invite_create(invite):
