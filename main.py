@@ -1361,6 +1361,42 @@ async def set_nick_lock_roles(interaction: discord.Interaction, roles: list[disc
         ephemeral=True
     )
 
+@bot.tree.command(name="set_nick_lock_role", description="Заборонити зміну ніку для ролі")
+@app_commands.describe(role="Роль для блокування зміни ніку")
+async def set_nick_lock_role(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    roles = set(nick_lock_roles.get(guild_id, []))
+    roles.add(role.id)
+    nick_lock_roles[guild_id] = list(roles)
+    save_nick_lock_roles()
+    await interaction.response.send_message(
+        f"✅ Заборонено змінювати нікнейм для ролі: {role.mention}",
+        ephemeral=True
+    )
+
+@bot.tree.command(name="remove_nick_lock_role", description="Дозволити зміну ніку для ролі")
+@app_commands.describe(role="Роль для розблокування зміни ніку")
+async def remove_nick_lock_role(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    roles = set(nick_lock_roles.get(guild_id, []))
+    if role.id in roles:
+        roles.remove(role.id)
+        nick_lock_roles[guild_id] = list(roles)
+        save_nick_lock_roles()
+        await interaction.response.send_message(
+            f"✅ Дозволено змінювати нікнейм для ролі: {role.mention}",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"ℹ️ Для цієї ролі не було обмеження на зміну ніку.",
+            ephemeral=True
+        )
+
 @bot.event
 async def on_member_update(before, after):
     # Якщо змінився нікнейм
