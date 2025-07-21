@@ -1,10 +1,10 @@
 [build]
-    builder = "NIXPACKS"
+builder = "NIXPACKS"
 
-    [deploy]
-    startCommand = "python ControlBot.py"
-    healthcheckPath = "/"
-    healthcheckTimeout = 100
+[deploy]
+startCommand = "python main.py"
+healthcheckPath = "/"
+healthcheckTimeout = 100
 
-    [[volumes]]
-    mountPath = "/data"
+[[volumes]]
+mountPath = "/data"
