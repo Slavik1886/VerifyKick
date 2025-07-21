@@ -255,6 +255,9 @@ async def on_member_join(member):
                                     guild = button_interaction.guild
                                     print(f"[DEBUG] Guild ID: {guild.id}")
                                     
+                                    # Оновлюємо кеш ПЕРЕД перевіркою
+                                    await update_invite_cache(guild)
+                                    
                                     current_invites = await guild.invites()
                                     print(f"[DEBUG] Поточні запрошення: {[(inv.code, inv.uses) for inv in current_invites]}")
                                     print(f"[DEBUG] Кеш запрошень: {invite_cache.get(guild.id, {})}")
@@ -268,6 +271,7 @@ async def on_member_join(member):
                                             break
                                     
                                     if used_invite:
+                                        # Оновлюємо кеш ПІСЛЯ визначення
                                         await update_invite_cache(guild)
                                         guild_roles = invite_roles.get(str(guild.id), {})
                                         print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
