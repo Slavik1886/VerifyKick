@@ -226,8 +226,11 @@ async def on_member_join(member):
                                     item.disabled = True
 
                             async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                                # Перевіряємо, чи має користувач роль модератора
-                                if not interaction.user.get_role(MODERATOR_ROLE_ID):
+                                # Перевіряємо, чи є користувач власником сервера або має роль модератора
+                                is_owner = interaction.user.id == interaction.guild.owner_id
+                                has_mod_role = interaction.user.get_role(MODERATOR_ROLE_ID) is not None
+                                
+                                if not (is_owner or has_mod_role):
                                     await interaction.response.send_message("❌ У вас немає прав на модерацію заявок", ephemeral=True)
                                     return False
                                 return True
