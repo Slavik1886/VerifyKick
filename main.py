@@ -649,15 +649,23 @@ pending_nicknames = {}  # {user_id: nickname}
 def load_pending_nicknames():
     try:
         with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+            data = json.load(f)
+            print(f"[DEBUG] Loaded pending_nicknames from file: {data}")
+            return data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"[DEBUG] Failed to load pending_nicknames: {e}")
         return {}
 
 def save_pending_nicknames():
-    with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
+    try:
+        with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
+        print(f"[DEBUG] Saved pending_nicknames to file: {pending_nicknames}")
+    except Exception as e:
+        print(f"[ERROR] Failed to save pending_nicknames: {e}")
 
 pending_nicknames = load_pending_nicknames()
+print(f"[DEBUG] Initial pending_nicknames: {pending_nicknames}")
 
 class JoinRequestModal(Modal, title="Запит на приєднання"):
     reason = TextInput(label="Чому ви хочете приєднатися?", style=discord.TextStyle.paragraph, required=True, max_length=300)
@@ -668,8 +676,12 @@ class JoinRequestModal(Modal, title="Запит на приєднання"):
             await interaction.response.send_message("Не знайдено канал для модерації заявок.", ephemeral=True)
             return
         # Зберігаємо ігровий нік у файл з ключем-строкою
-        pending_nicknames[str(interaction.user.id)] = self.nickname.value.strip()
+        user_id = str(interaction.user.id)
+        nickname_value = self.nickname.value.strip()
+        pending_nicknames[user_id] = nickname_value
         save_pending_nicknames()
+        print(f"[DEBUG] Saved nickname for user {user_id}: {nickname_value}")
+        print(f"[DEBUG] Current pending_nicknames: {pending_nicknames}")
         
         embed = discord.Embed(
             title="Нова заявка на приєднання",
@@ -678,7 +690,7 @@ class JoinRequestModal(Modal, title="Запит на приєднання"):
         )
         embed.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
         embed.add_field(name="Користувач", value=f"{interaction.user.mention} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Ігровий нік", value=self.nickname.value.strip(), inline=False)
+        embed.add_field(name="Ігровий нік", value=nickname_value, inline=False)
         embed.add_field(name="Відповідь", value=self.reason.value, inline=False)
         view = JoinRequestView(user_id=interaction.user.id, reason=self.reason.value)
         await mod_channel.send(embed=embed, view=view)
