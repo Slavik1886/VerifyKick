@@ -195,9 +195,10 @@ async def on_member_join(member):
 
             # Якщо це запрошення потребує модерації
             if used_invite.code == MODERATION_INVITE_CODE:
-                mod_channel = bot.get_channel(MOD_CHANNEL_ID)
-                if not mod_channel:
-                    print(f"[ERROR] Не знайдено канал для модерації {MOD_CHANNEL_ID}")
+                mod_channel_id = mod_channel.get(str(guild.id))
+                mod_channel_obj = bot.get_channel(mod_channel_id) if mod_channel_id else None
+                if not mod_channel_obj:
+                    print(f"[ERROR] Не знайдено канал для модерації {mod_channel_id}")
                     return
 
                 # Створюємо форму для введення ніку
@@ -332,7 +333,7 @@ async def on_member_join(member):
                                 await button_interaction.message.edit(view=self)
                         
                         view = JoinRequestView()
-                        await mod_channel.send(embed=embed, view=view)
+                        await mod_channel_obj.send(embed=embed, view=view)
                         await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
 
                 # Створюємо кнопку для введення ніку
@@ -1305,6 +1306,31 @@ async def set_nick_notify_channel(interaction: discord.Interaction, channel: dis
 
 # Для збереження коду інвайту для кожного нового учасника
 pending_invites = {}  # {user_id: invite_code}
+
+MOD_CHANNEL_FILE = os.path.join(DATA_DIR, 'mod_channel.json')
+
+def load_mod_channel():
+    try:
+        with open(MOD_CHANNEL_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_mod_channel():
+    with open(MOD_CHANNEL_FILE, 'w', encoding='utf-8') as f:
+        json.dump(mod_channel, f, ensure_ascii=False, indent=2)
+
+mod_channel = load_mod_channel()  # {guild_id: channel_id}
+
+@bot.tree.command(name="set_mod_channel", description="Встановити канал для заявок на модерацію")
+@app_commands.describe(channel="Канал для заявок")
+async def set_mod_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    mod_channel[guild_id] = channel.id
+    save_mod_channel()
+    await interaction.response.send_message(f"✅ Канал для заявок встановлено: {channel.mention}", ephemeral=True)
 
 if __name__ == '__main__':
     print("Запуск бота...")
