@@ -41,8 +41,15 @@ invite_cache = {}
 welcome_messages = {}
 
 # Вказуємо папку для постійного зберігання даних
-DATA_DIR = "/data/"
-os.makedirs(DATA_DIR, exist_ok=True)
+DATA_DIR = "/data"
+
+# Створюємо папку при старті
+print(f"[DEBUG] Creating data directory at {DATA_DIR}")
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    print(f"[DEBUG] Data directory created/exists at {DATA_DIR}")
+except Exception as e:
+    print(f"[ERROR] Failed to create data directory: {e}")
 
 def load_invite_data():
     try:
@@ -648,6 +655,11 @@ pending_nicknames = {}  # {user_id: nickname}
 
 def load_pending_nicknames():
     try:
+        # Перевіряємо наявність папки перед читанням файлу
+        if not os.path.exists(DATA_DIR):
+            print(f"[ERROR] Data directory does not exist at {DATA_DIR}")
+            return {}
+            
         with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             print(f"[DEBUG] Loaded pending_nicknames from file: {data}")
@@ -658,6 +670,16 @@ def load_pending_nicknames():
 
 def save_pending_nicknames():
     try:
+        # Перевіряємо наявність папки перед збереженням
+        if not os.path.exists(DATA_DIR):
+            print(f"[ERROR] Data directory does not exist at {DATA_DIR}")
+            try:
+                os.makedirs(DATA_DIR, exist_ok=True)
+                print(f"[DEBUG] Created data directory at {DATA_DIR}")
+            except Exception as e:
+                print(f"[ERROR] Failed to create data directory: {e}")
+                return
+                
         with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
             json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
         print(f"[DEBUG] Saved pending_nicknames to file: {pending_nicknames}")
