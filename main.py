@@ -1502,6 +1502,7 @@ async def official_news_autopost():
     sources = [
         {"name": "Google News WoT", "url": GOOGLE_NEWS_RSS},
         {"name": "YouTube WoT Official", "url": YOUTUBE_WOT_RSS},
+        {"name": "WoT EU Official RSS", "url": "https://worldoftanks.eu/en/rss/news/"},
         # Додайте інші офіційні джерела тут за потреби
     ]
     for guild in bot.guilds:
