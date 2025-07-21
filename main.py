@@ -249,11 +249,12 @@ async def on_member_join(member):
 
                             @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
                             async def approve(self, button_interaction: discord.Interaction, button: Button):
-                                # Видаємо роль відповідно до запрошення
-                                guild = button_interaction.guild
-                                assigned_role = None
-                                
+                                print(f"[DEBUG] Кнопку 'Схвалити' натиснув: {button_interaction.user}")
                                 try:
+                                    # Видаємо роль відповідно до запрошення
+                                    guild = button_interaction.guild
+                                    assigned_role = None
+                                    
                                     current_invites = await guild.invites()
                                     used_invite = None
                                     for invite in current_invites:
@@ -293,9 +294,10 @@ async def on_member_join(member):
                                                         f"✅ Користувача схвалено\nНадано роль {role.mention}",
                                                         ephemeral=True
                                                     )
-                                    
+                                
                                 except Exception as e:
-                                    await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+                                    print(f"[ERROR] Помилка при схваленні: {e}")
+                                    await button_interaction.response.send_message(f"❌ Помилка при схваленні: {e}", ephemeral=True)
                                     return
                                 
                                 # Деактивуємо кнопки
