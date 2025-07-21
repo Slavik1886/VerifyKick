@@ -253,31 +253,41 @@ async def on_member_join(member):
                                 try:
                                     # Видаємо роль відповідно до запрошення
                                     guild = button_interaction.guild
-                                    assigned_role = None
+                                    print(f"[DEBUG] Guild ID: {guild.id}")
                                     
                                     current_invites = await guild.invites()
+                                    print(f"[DEBUG] Поточні запрошення: {[(inv.code, inv.uses) for inv in current_invites]}")
+                                    print(f"[DEBUG] Кеш запрошень: {invite_cache.get(guild.id, {})}")
+                                    
                                     used_invite = None
                                     for invite in current_invites:
                                         cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
                                         if invite.uses > cached_uses:
                                             used_invite = invite
+                                            print(f"[DEBUG] Знайдено використане запрошення: {invite.code} (uses: {invite.uses}, cached: {cached_uses})")
                                             break
                                     
                                     if used_invite:
                                         await update_invite_cache(guild)
                                         guild_roles = invite_roles.get(str(guild.id), {})
+                                        print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
                                         role_id = guild_roles.get(used_invite.code)
+                                        print(f"[DEBUG] ID ролі для запрошення {used_invite.code}: {role_id}")
                                         
                                         if role_id:
                                             role = guild.get_role(role_id)
+                                            print(f"[DEBUG] Знайдена роль: {role}")
                                             if role:
+                                                print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
                                                 await member.add_roles(role)
                                                 assigned_role = role
                                                 
                                                 # Змінюємо нік після схвалення
                                                 saved_nick = pending_nicknames.pop(str(member.id), None)
+                                                print(f"[DEBUG] Збережений нік: {saved_nick}")
                                                 if saved_nick:
                                                     try:
+                                                        print(f"[DEBUG] Змінюємо нік на: {saved_nick}")
                                                         await member.edit(nick=saved_nick)
                                                         save_pending_nicknames()
                                                         await button_interaction.response.send_message(
@@ -285,6 +295,7 @@ async def on_member_join(member):
                                                             ephemeral=True
                                                         )
                                                     except Exception as e:
+                                                        print(f"[ERROR] Помилка зміни ніку: {e}")
                                                         await button_interaction.response.send_message(
                                                             f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
                                                             ephemeral=True
@@ -294,15 +305,27 @@ async def on_member_join(member):
                                                         f"✅ Користувача схвалено\nНадано роль {role.mention}",
                                                         ephemeral=True
                                                     )
+                                            else:
+                                                print(f"[ERROR] Роль {role_id} не знайдена на сервері")
+                                        else:
+                                            print(f"[ERROR] Не знайдено роль для запрошення {used_invite.code}")
+                                    else:
+                                        print("[ERROR] Не вдалося визначити використане запрошення")
                                 
                                 except Exception as e:
-                                    print(f"[ERROR] Помилка при схваленні: {e}")
-                                    await button_interaction.response.send_message(f"❌ Помилка при схваленні: {e}", ephemeral=True)
+                                    print(f"[ERROR] Помилка при схваленні: {str(e)}")
+                                    print(f"[ERROR] Тип помилки: {type(e)}")
+                                    import traceback
+                                    print(f"[ERROR] Traceback: {traceback.format_exc()}")
+                                    await button_interaction.response.send_message(f"❌ Помилка при схваленні: {str(e)}", ephemeral=True)
                                     return
                                 
-                                # Деактивуємо кнопки
-                                self.disable_buttons()
-                                await button_interaction.message.edit(view=self)
+                                try:
+                                    # Деактивуємо кнопки
+                                    self.disable_buttons()
+                                    await button_interaction.message.edit(view=self)
+                                except Exception as e:
+                                    print(f"[ERROR] Помилка при деактивації кнопок: {e}")
                             
                             @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
                             async def deny(self, button_interaction: discord.Interaction, button: Button):
