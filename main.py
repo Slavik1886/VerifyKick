@@ -157,27 +157,25 @@ async def on_voice_state_update(member, before, after):
 async def on_member_join(member):
     print(f"[DEBUG] on_member_join: {member} ({member.id})")
     print(f"[DEBUG] pending_nicknames: {pending_nicknames}")
+    # --- Зміна ніку, якщо є у pending_nicknames ---
     nickname = pending_nicknames.pop(str(member.id), None)
     print(f"[DEBUG] nickname found: {nickname}")
     if nickname:
         try:
             await member.edit(nick=nickname)
-            print(f"[DEBUG] Nickname changed for {member} to {nickname}")
+            save_pending_nicknames() # Зберігаємо зміни у файлі
+            # Повідомлення у канал, якщо налаштовано
             guild_id = str(member.guild.id)
             notify_channel_id = nick_notify_channel.get(guild_id)
             notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
             if notify_channel:
                 await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
         except Exception as e:
-            print(f"[ERROR] Failed to change nickname for {member}: {e}")
             guild_id = str(member.guild.id)
             notify_channel_id = nick_notify_channel.get(guild_id)
             notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
             if notify_channel:
                 await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention}: {e}")
-        save_pending_nicknames()
-    if member.bot:
-        return
     
     guild = member.guild
     assigned_role = None
@@ -641,9 +639,8 @@ def save_nick_notify_channel():
 nick_notify_channel = load_nick_notify_channel()
 
 # Тимчасове зберігання ігрових ніків для заявок
-pending_nicknames = {}  # {user_id: nickname}
-
 PENDING_NICKNAMES_FILE = 'pending_nicknames.json'
+pending_nicknames = {}  # {user_id: nickname}
 
 def load_pending_nicknames():
     try:
@@ -666,8 +663,10 @@ class JoinRequestModal(Modal, title="Запит на приєднання"):
         if not mod_channel:
             await interaction.response.send_message("Не знайдено канал для модерації заявок.", ephemeral=True)
             return
-        # Зберігаємо ігровий нік для user_id
-        pending_nicknames[interaction.user.id] = self.nickname.value.strip()
+        # Зберігаємо ігровий нік у файл з ключем-строкою
+        pending_nicknames[str(interaction.user.id)] = self.nickname.value.strip()
+        save_pending_nicknames()
+        
         embed = discord.Embed(
             title="Нова заявка на приєднання",
             color=discord.Color.blurple(),
@@ -692,30 +691,16 @@ class JoinRequestView(View):
         if not user:
             await interaction.response.send_message("Користувача не знайдено.", ephemeral=True)
             return
-        guild = interaction.guild
-        guild_id = str(guild.id)
-        # --- Замість pop, просто беремо nickname і зберігаємо у pending_nicknames ---
-        nickname = pending_nicknames.get(str(self.user_id), None)
-        member = guild.get_member(self.user_id) if guild else None
-        notify_channel_id = nick_notify_channel.get(guild_id)
-        notify_channel = guild.get_channel(notify_channel_id) if notify_channel_id else None
-        # --- Зберігаємо бажаний нік у pending_nicknames (файл) ---
-        if nickname:
-            pending_nicknames[str(self.user_id)] = nickname
-            save_pending_nicknames()
-        try:
-            if member and nickname:
-                await member.edit(nick=nickname)
-                if notify_channel:
-                    await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
-        except Exception as e:
-            if notify_channel:
-                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention if member else self.user_id}: {e}")
+            
+        # Нік вже збережено у файл, тут нічого робити не треба.
+        # Просто надсилаємо запрошення.
+        
         try:
             await user.send(f"Ваша заявка схвалена! Ось запрошення: {GUILD_INVITE_LINK}")
             await interaction.response.send_message("Користувача повідомлено про схвалення.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Не вдалося надіслати DM: {e}", ephemeral=True)
+        
         self.disable_all_items()
         await interaction.message.edit(view=self)
     @discord.ui.button(label="Скасувати", style=discord.ButtonStyle.danger)
