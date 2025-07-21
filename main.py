@@ -155,6 +155,27 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
+    print(f"[DEBUG] on_member_join: {member} ({member.id})")
+    print(f"[DEBUG] pending_nicknames: {pending_nicknames}")
+    nickname = pending_nicknames.pop(str(member.id), None)
+    print(f"[DEBUG] nickname found: {nickname}")
+    if nickname:
+        try:
+            await member.edit(nick=nickname)
+            print(f"[DEBUG] Nickname changed for {member} to {nickname}")
+            guild_id = str(member.guild.id)
+            notify_channel_id = nick_notify_channel.get(guild_id)
+            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
+            if notify_channel:
+                await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
+        except Exception as e:
+            print(f"[ERROR] Failed to change nickname for {member}: {e}")
+            guild_id = str(member.guild.id)
+            notify_channel_id = nick_notify_channel.get(guild_id)
+            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
+            if notify_channel:
+                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention}: {e}")
+        save_pending_nicknames()
     if member.bot:
         return
     
