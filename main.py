@@ -1347,3 +1347,7 @@ def save_nick_lock_roles():
         json.dump(nick_lock_roles, f, ensure_ascii=False, indent=2)
 
 nick_lock_roles = load_nick_lock_roles()  # {guild_id: [role_id, ...]}
+
+if __name__ == '__main__':
+    print("Запуск бота...")
+    bot.run(TOKEN)
