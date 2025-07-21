@@ -274,20 +274,21 @@ async def on_member_join(member):
             view = JoinRequestView()
             await mod_channel.send(embed=embed, view=view)
             await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
-    
-    # Показуємо форму для введення ніку новому користувачу
+
+    # Створюємо кнопку для введення ніку
+    class SetNicknameView(View):
+        def __init__(self):
+            super().__init__(timeout=None)
+
+        @discord.ui.button(label="Вказати нікнейм", style=discord.ButtonStyle.primary)
+        async def set_nickname(self, interaction: discord.Interaction, button: Button):
+            await interaction.response.send_modal(NicknameModal())
+
+    # Надсилаємо повідомлення з кнопкою
     try:
-        await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=View().add_item(
-            Button(label="Вказати нікнейм", style=discord.ButtonStyle.primary, custom_id="set_nickname")
-        ))
+        await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=SetNicknameView())
     except Exception as e:
         print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
-
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type == discord.InteractionType.component:
-        if interaction.custom_id == "set_nickname":
-            await interaction.response.send_modal(NicknameModal())
 
 @bot.event
 async def on_invite_create(invite):
