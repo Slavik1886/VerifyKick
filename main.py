@@ -166,105 +166,128 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
-    print(f"[DEBUG] on_member_join: {member} ({member.id})")
-    print(f"[DEBUG] pending_nicknames: {pending_nicknames}")
-    # --- Зміна ніку, якщо є у pending_nicknames ---
-    nickname = pending_nicknames.pop(str(member.id), None)
-    print(f"[DEBUG] nickname found: {nickname}")
-    if nickname:
-        try:
-            await member.edit(nick=nickname)
-            save_pending_nicknames() # Зберігаємо зміни у файлі
-            # Повідомлення у канал, якщо налаштовано
-            guild_id = str(member.guild.id)
-            notify_channel_id = nick_notify_channel.get(guild_id)
-            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
-            if notify_channel:
-                await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
-        except Exception as e:
-            guild_id = str(member.guild.id)
-            notify_channel_id = nick_notify_channel.get(guild_id)
-            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
-            if notify_channel:
-                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention}: {e}")
+    if member.bot:
+        return
     
-    guild = member.guild
-    assigned_role = None
-    
-    try:
-        current_invites = await guild.invites()
-        used_invite = None
-        for invite in current_invites:
-            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
-            if invite.uses > cached_uses:
-                used_invite = invite
-                break
+    mod_channel = bot.get_channel(MOD_CHANNEL_ID)
+    if not mod_channel:
+        print(f"[ERROR] Не знайдено канал для модерації {MOD_CHANNEL_ID}")
+        return
+
+    # Створюємо форму для введення ніку
+    class NicknameModal(Modal, title="Вкажіть свій нікнейм"):
+        nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
         
-        if used_invite:
-            await update_invite_cache(guild)
-            guild_roles = invite_roles.get(str(guild.id), {})
-            role_id = guild_roles.get(used_invite.code)
+        async def on_submit(self, interaction: discord.Interaction):
+            nickname_value = self.nickname.value.strip()
+            # Зберігаємо нік для подальшого використання
+            pending_nicknames[str(member.id)] = nickname_value
+            save_pending_nicknames()
             
-            if role_id:
-                role = guild.get_role(role_id)
-                if role:
+            # Створюємо ембед для заявки
+            embed = discord.Embed(
+                title="Нова заявка на приєднання",
+                color=discord.Color.blurple(),
+                timestamp=datetime.utcnow()
+            )
+            embed.set_author(name=member.name, icon_url=member.display_avatar.url)
+            embed.add_field(name="Користувач", value=f"{member.mention} ({member.id})", inline=False)
+            embed.add_field(name="Бажаний нік", value=nickname_value, inline=False)
+            embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
+            
+            # Створюємо кнопки для модерації
+            class JoinRequestView(View):
+                def __init__(self):
+                    super().__init__(timeout=None)
+                
+                @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
+                async def approve(self, button_interaction: discord.Interaction, button: Button):
+                    # Видаємо роль відповідно до запрошення
+                    guild = button_interaction.guild
+                    assigned_role = None
+                    
                     try:
-                        await member.add_roles(role)
-                        assigned_role = role
-                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
-                    except discord.Forbidden:
-                        print(f"Немає дозволу на давати роль {role.name}")
+                        current_invites = await guild.invites()
+                        used_invite = None
+                        for invite in current_invites:
+                            cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
+                            if invite.uses > cached_uses:
+                                used_invite = invite
+                                break
+                        
+                        if used_invite:
+                            await update_invite_cache(guild)
+                            guild_roles = invite_roles.get(str(guild.id), {})
+                            role_id = guild_roles.get(used_invite.code)
+                            
+                            if role_id:
+                                role = guild.get_role(role_id)
+                                if role:
+                                    await member.add_roles(role)
+                                    assigned_role = role
+                                    
+                                    # Змінюємо нік після схвалення
+                                    saved_nick = pending_nicknames.pop(str(member.id), None)
+                                    if saved_nick:
+                                        try:
+                                            await member.edit(nick=saved_nick)
+                                            save_pending_nicknames()
+                                            await button_interaction.response.send_message(
+                                                f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
+                                                ephemeral=True
+                                            )
+                                        except Exception as e:
+                                            await button_interaction.response.send_message(
+                                                f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
+                                                ephemeral=True
+                                            )
+                                    else:
+                                        await button_interaction.response.send_message(
+                                            f"✅ Користувача схвалено\nНадано роль {role.mention}",
+                                            ephemeral=True
+                                        )
+                    
                     except Exception as e:
-                        print(f"Помилка надання ролі: {e}")
-    except Exception as e:
-        print(f"Помилка обробки нового учасника: {e}")
+                        await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+                        return
+                    
+                    self.disable_all_items()
+                    await button_interaction.message.edit(view=self)
+                
+                @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
+                async def deny(self, button_interaction: discord.Interaction, button: Button):
+                    try:
+                        # Видаляємо збережений нік при відхиленні
+                        if str(member.id) in pending_nicknames:
+                            del pending_nicknames[str(member.id)]
+                            save_pending_nicknames()
+                        
+                        await member.kick(reason="Заявку відхилено")
+                        await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
+                    except Exception as e:
+                        await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+                    
+                    self.disable_all_items()
+                    await button_interaction.message.edit(view=self)
+            
+            # Надсилаємо заявку в канал модерації
+            view = JoinRequestView()
+            await mod_channel.send(embed=embed, view=view)
+            await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
     
-    # Обробка привітальних повідомлень
-    if str(guild.id) in welcome_messages:
-        channel_id = welcome_messages[str(guild.id)]["channel_id"]
-        channel = guild.get_channel(channel_id)
-        if channel:
-            try:
-                inviter = "Невідомо"
-                if used_invite and used_invite.inviter:
-                    inviter = used_invite.inviter.mention
-                role_info = "Не призначено"
-                if assigned_role:
-                    role_info = assigned_role.mention
-                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
-                embed = discord.Embed(
-                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
-                    color=discord.Color.green(),
-                    timestamp=kyiv_time
-                )
-                embed.set_thumbnail(url=member.display_avatar.url)
-                embed.add_field(
-                    name="Користувач",
-                    value=f"{member.mention}\n{member.display_name}",
-                    inline=True
-                )
-                embed.add_field(
-                    name="Запросив",
-                    value=inviter,
-                    inline=True
-                )
-                embed.add_field(
-                    name="Призначена роль",
-                    value=role_info,
-                    inline=False
-                )
-                embed.add_field(
-                    name="Дата реєстрації в Discord",
-                    value=member.created_at.strftime("%d.%m.%Y"),
-                    inline=False
-                )
-                embed.set_footer(
-                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
-                    icon_url=guild.icon.url if guild.icon else None
-                )
-                await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Помилка при відправці привітання: {e}")
+    # Показуємо форму для введення ніку новому користувачу
+    try:
+        await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=View().add_item(
+            Button(label="Вказати нікнейм", style=discord.ButtonStyle.primary, custom_id="set_nickname")
+        ))
+    except Exception as e:
+        print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.component:
+        if interaction.custom_id == "set_nickname":
+            await interaction.response.send_modal(NicknameModal())
 
 @bot.event
 async def on_invite_create(invite):
@@ -688,74 +711,6 @@ def save_pending_nicknames():
 
 pending_nicknames = load_pending_nicknames()
 print(f"[DEBUG] Initial pending_nicknames: {pending_nicknames}")
-
-class JoinRequestModal(Modal, title="Запит на приєднання"):
-    reason = TextInput(label="Чому ви хочете приєднатися?", style=discord.TextStyle.paragraph, required=True, max_length=300)
-    nickname = TextInput(label="Ваш ігровий нік (WoT)", required=True, max_length=32)
-    async def on_submit(self, interaction: discord.Interaction):
-        mod_channel = interaction.client.get_channel(MOD_CHANNEL_ID)
-        if not mod_channel:
-            await interaction.response.send_message("Не знайдено канал для модерації заявок.", ephemeral=True)
-            return
-        # Зберігаємо ігровий нік у файл з ключем-строкою
-        user_id = str(interaction.user.id)
-        nickname_value = self.nickname.value.strip()
-        pending_nicknames[user_id] = nickname_value
-        save_pending_nicknames()
-        print(f"[DEBUG] Saved nickname for user {user_id}: {nickname_value}")
-        print(f"[DEBUG] Current pending_nicknames: {pending_nicknames}")
-        
-        embed = discord.Embed(
-            title="Нова заявка на приєднання",
-            color=discord.Color.blurple(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
-        embed.add_field(name="Користувач", value=f"{interaction.user.mention} ({interaction.user.id})", inline=False)
-        embed.add_field(name="Ігровий нік", value=nickname_value, inline=False)
-        embed.add_field(name="Відповідь", value=self.reason.value, inline=False)
-        view = JoinRequestView(user_id=interaction.user.id, reason=self.reason.value)
-        await mod_channel.send(embed=embed, view=view)
-        await interaction.response.send_message("Ваша заявка надіслана модераторам. Очікуйте рішення.", ephemeral=True)
-
-class JoinRequestView(View):
-    def __init__(self, user_id, reason):
-        super().__init__(timeout=None)
-        self.user_id = user_id
-        self.reason = reason
-    @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
-    async def approve(self, interaction: discord.Interaction, button: Button):
-        user = interaction.client.get_user(self.user_id)
-        if not user:
-            await interaction.response.send_message("Користувача не знайдено.", ephemeral=True)
-            return
-            
-        # Нік вже збережено у файл, тут нічого робити не треба.
-        # Просто надсилаємо запрошення.
-        
-        try:
-            await user.send(f"Ваша заявка схвалена! Ось запрошення: {GUILD_INVITE_LINK}")
-            await interaction.response.send_message("Користувача повідомлено про схвалення.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"Не вдалося надіслати DM: {e}", ephemeral=True)
-        
-        self.disable_all_items()
-        await interaction.message.edit(view=self)
-    @discord.ui.button(label="Скасувати", style=discord.ButtonStyle.danger)
-    async def deny(self, interaction: discord.Interaction, button: Button):
-        user = interaction.client.get_user(self.user_id)
-        if user:
-            try:
-                await user.send("Ваша заявка на приєднання була відхилена.")
-            except:
-                pass
-        await interaction.response.send_message("Заявку скасовано.", ephemeral=True)
-        self.disable_all_items()
-        await interaction.message.edit(view=self)
-
-@bot.tree.command(name="request_join", description="Подати заявку на приєднання до сервера")
-async def request_join(interaction: discord.Interaction):
-    await interaction.response.send_modal(JoinRequestModal())
 
 @bot.tree.command(name="purge", description="Видалити N останніх повідомлень у каналі")
 @app_commands.describe(amount="Кількість повідомлень для видалення")
