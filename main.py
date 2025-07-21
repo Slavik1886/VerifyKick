@@ -57,10 +57,17 @@ def load_invite_data():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load invite_roles.json: {e}")
+        return {}
 
 def save_invite_data():
-    with open(os.path.join(DATA_DIR, 'invite_roles.json'), 'w') as f:
-        json.dump(invite_roles, f)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, 'invite_roles.json'), 'w') as f:
+            json.dump(invite_roles, f)
+    except Exception as e:
+        print(f"[ERROR] Failed to save invite_roles.json: {e}")
 
 def load_welcome_data():
     try:
@@ -68,10 +75,17 @@ def load_welcome_data():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load welcome_messages.json: {e}")
+        return {}
 
 def save_welcome_data():
-    with open(os.path.join(DATA_DIR, 'welcome_messages.json'), 'w') as f:
-        json.dump(welcome_messages, f)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, 'welcome_messages.json'), 'w') as f:
+            json.dump(welcome_messages, f)
+    except Exception as e:
+        print(f"[ERROR] Failed to save welcome_messages.json: {e}")
 
 invite_roles = load_invite_data()
 welcome_messages = load_welcome_data()
@@ -184,18 +198,18 @@ async def on_member_join(member):
             if invite.uses > cached_uses:
                 used_invite = invite
                 break
+        
         # Зберігаємо код інвайту для цього користувача
         if used_invite:
             pending_invites[str(member.id)] = used_invite.code
-        
-        if used_invite:
             await update_invite_cache(guild)
             guild_roles = invite_roles.get(str(guild.id), {})
             role_id = guild_roles.get(used_invite.code)
             
             # Якщо це запрошення потребує модерації
             if used_invite.code == MODERATION_INVITE_CODE:
-                mod_channel_id = mod_channel.get(str(guild.id))
+                guild_id = str(member.guild.id)
+                mod_channel_id = mod_channel.get(guild_id)
                 mod_channel_obj = bot.get_channel(mod_channel_id) if mod_channel_id else None
                 if not mod_channel_obj:
                     print(f"[ERROR] Не знайдено канал для модерації {mod_channel_id}")
@@ -206,135 +220,142 @@ async def on_member_join(member):
                     nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
                     
                     async def on_submit(self, interaction: discord.Interaction):
-                        nickname_value = self.nickname.value.strip()
-                        pending_nicknames[str(member.id)] = nickname_value
-                        save_pending_nicknames()
-                        
-                        embed = discord.Embed(
-                            title="Нова заявка на приєднання",
-                            color=discord.Color.blurple(),
-                            timestamp=datetime.utcnow()
-                        )
-                        embed.set_author(name=member.name, icon_url=member.display_avatar.url)
-                        embed.add_field(name="Користувач", value=f"{member.mention} ({member.id})", inline=False)
-                        embed.add_field(name="Бажаний нік", value=nickname_value, inline=False)
-                        embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
-                        
-                        # Створюємо кнопки для модерації
-                        class JoinRequestView(View):
-                            def __init__(self):
-                                super().__init__(timeout=None)
+                        try:
+                            nickname_value = self.nickname.value.strip()
+                            pending_nicknames[str(member.id)] = nickname_value
+                            save_pending_nicknames()
+                            
+                            embed = discord.Embed(
+                                title="Нова заявка на приєднання",
+                                color=discord.Color.blurple(),
+                                timestamp=datetime.utcnow()
+                            )
+                            embed.set_author(name=member.name, icon_url=member.display_avatar.url)
+                            embed.add_field(name="Користувач", value=f"{member.mention} ({member.id})", inline=False)
+                            embed.add_field(name="Бажаний нік", value=nickname_value, inline=False)
+                            embed.add_field(name="Дата реєстрації", value=member.created_at.strftime("%d.%m.%Y"), inline=False)
+                            
+                            # Створюємо кнопки для модерації
+                            class JoinRequestView(View):
+                                def __init__(self):
+                                    super().__init__(timeout=None)
 
-                            def disable_buttons(self):
-                                for item in self.children:
-                                    item.disabled = True
+                                def disable_buttons(self):
+                                    for item in self.children:
+                                        item.disabled = True
 
-                            async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                                try:
-                                    # Перевіряємо, чи є користувач власником сервера або має роль модератора
-                                    is_owner = interaction.user.id == interaction.guild.owner_id
-                                    mod_role = interaction.guild.get_role(MODERATOR_ROLE_ID)
-                                    has_mod_role = mod_role in interaction.user.roles if mod_role else False
-                                    
-                                    print(f"[DEBUG] Перевірка прав модерації:")
-                                    print(f"[DEBUG] User ID: {interaction.user.id}")
-                                    print(f"[DEBUG] Is Owner: {is_owner}")
-                                    print(f"[DEBUG] Has Mod Role: {has_mod_role}")
-                                    print(f"[DEBUG] User Roles: {[role.id for role in interaction.user.roles]}")
-                                    
-                                    if is_owner or has_mod_role:
-                                        return True
+                                async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                                    try:
+                                        is_owner = interaction.user.id == interaction.guild.owner_id
+                                        mod_role = interaction.guild.get_role(MODERATOR_ROLE_ID)
+                                        has_mod_role = mod_role in interaction.user.roles if mod_role else False
                                         
-                                    await interaction.response.send_message("❌ У вас немає прав на модерацію заявок", ephemeral=True)
-                                    return False
-                                except Exception as e:
-                                    print(f"[ERROR] Помилка перевірки прав: {e}")
-                                    return False
+                                        print(f"[DEBUG] Перевірка прав модерації:")
+                                        print(f"[DEBUG] User ID: {interaction.user.id}")
+                                        print(f"[DEBUG] Is Owner: {is_owner}")
+                                        print(f"[DEBUG] Has Mod Role: {has_mod_role}")
+                                        print(f"[DEBUG] User Roles: {[role.id for role in interaction.user.roles]}")
+                                        
+                                        if is_owner or has_mod_role:
+                                            return True
+                                            
+                                        await interaction.response.send_message("❌ У вас немає прав на модерацію заявок", ephemeral=True)
+                                        return False
+                                    except Exception as e:
+                                        print(f"[ERROR] Помилка перевірки прав: {e}")
+                                        return False
 
-                            @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
-                            async def approve(self, button_interaction: discord.Interaction, button: Button):
-                                print(f"[DEBUG] Кнопку 'Схвалити' натиснув: {button_interaction.user}")
-                                try:
-                                    guild = button_interaction.guild
-                                    print(f"[DEBUG] Guild ID: {guild.id}")
-                                    # Беремо код інвайту з pending_invites
-                                    invite_code = pending_invites.get(str(member.id))
-                                    print(f"[DEBUG] Код інвайту для користувача: {invite_code}")
-                                    if not invite_code:
-                                        await button_interaction.response.send_message("❌ Не вдалося визначити інвайт користувача", ephemeral=True)
-                                        return
-                                    guild_roles = invite_roles.get(str(guild.id), {})
-                                    print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
-                                    role_id = guild_roles.get(invite_code)
-                                    print(f"[DEBUG] ID ролі для запрошення {invite_code}: {role_id}")
-            if role_id:
-                role = guild.get_role(role_id)
-                                        print(f"[DEBUG] Знайдена роль: {role}")
-                if role:
-                                            print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
-                        await member.add_roles(role)
-                                            # Змінюємо нік після схвалення
-                                            saved_nick = pending_nicknames.pop(str(member.id), None)
-                                            print(f"[DEBUG] Збережений нік: {saved_nick}")
-                                            if saved_nick:
-                                                try:
-                                                    print(f"[DEBUG] Змінюємо нік на: {saved_nick}")
-                                                    await member.edit(nick=saved_nick)
-                                                    save_pending_nicknames()
+                                @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
+                                async def approve(self, button_interaction: discord.Interaction, button: Button):
+                                    try:
+                                        print(f"[DEBUG] Кнопку 'Схвалити' натиснув: {button_interaction.user}")
+                                        guild = button_interaction.guild
+                                        print(f"[DEBUG] Guild ID: {guild.id}")
+                                        
+                                        invite_code = pending_invites.get(str(member.id))
+                                        print(f"[DEBUG] Код інвайту для користувача: {invite_code}")
+                                        if not invite_code:
+                                            await button_interaction.response.send_message("❌ Не вдалося визначити інвайт користувача", ephemeral=True)
+                                            return
+                                            
+                                        guild_roles = invite_roles.get(str(guild.id), {})
+                                        print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
+                                        role_id = guild_roles.get(invite_code)
+                                        print(f"[DEBUG] ID ролі для запрошення {invite_code}: {role_id}")
+                                        
+                                        if role_id:
+                                            role = guild.get_role(role_id)
+                                            print(f"[DEBUG] Знайдена роль: {role}")
+                                            if role:
+                                                print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
+                                                await member.add_roles(role)
+                                                
+                                                saved_nick = pending_nicknames.pop(str(member.id), None)
+                                                print(f"[DEBUG] Збережений нік: {saved_nick}")
+                                                if saved_nick:
+                                                    try:
+                                                        print(f"[DEBUG] Змінюємо нік на: {saved_nick}")
+                                                        await member.edit(nick=saved_nick)
+                                                        save_pending_nicknames()
+                                                        await button_interaction.response.send_message(
+                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
+                                                            ephemeral=True
+                                                        )
+                                                    except Exception as e:
+                                                        print(f"[ERROR] Помилка зміни ніку: {e}")
+                                                        await button_interaction.response.send_message(
+                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
+                                                            ephemeral=True
+                                                        )
+                                                else:
                                                     await button_interaction.response.send_message(
-                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
-                                                        ephemeral=True
-                                                    )
-                                                except Exception as e:
-                                                    print(f"[ERROR] Помилка зміни ніку: {e}")
-                                                    await button_interaction.response.send_message(
-                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
+                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}",
                                                         ephemeral=True
                                                     )
                                             else:
-                                                await button_interaction.response.send_message(
-                                                    f"✅ Користувача схвалено\nНадано роль {role.mention}",
-                                                    ephemeral=True
-                                                )
+                                                print(f"[ERROR] Роль {role_id} не знайдена на сервері")
+                                                await button_interaction.response.send_message("❌ Роль не знайдена на сервері", ephemeral=True)
                                         else:
-                                            print(f"[ERROR] Роль {role_id} не знайдена на сервері")
-                                    else:
-                                        print(f"[ERROR] Не знайдено роль для запрошення {invite_code}")
-            except Exception as e:
-                                    print(f"[ERROR] Помилка при схваленні: {str(e)}")
-                                    print(f"[ERROR] Тип помилки: {type(e)}")
-                                    import traceback
-                                    print(f"[ERROR] Traceback: {traceback.format_exc()}")
-                                    await button_interaction.response.send_message(f"❌ Помилка при схваленні: {str(e)}", ephemeral=True)
-                                    return
-                                
-                                try:
-                                    # Деактивуємо кнопки
-                                    self.disable_buttons()
-                                    await button_interaction.message.edit(view=self)
-                                except Exception as e:
-                                    print(f"[ERROR] Помилка при деактивації кнопок: {e}")
-                            
-                            @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
-                            async def deny(self, button_interaction: discord.Interaction, button: Button):
-                                try:
-                                    # Видаляємо збережений нік при відхиленні
-                                    if str(member.id) in pending_nicknames:
-                                        del pending_nicknames[str(member.id)]
-                                        save_pending_nicknames()
+                                            print(f"[ERROR] Не знайдено роль для запрошення {invite_code}")
+                                            await button_interaction.response.send_message("❌ Не знайдено роль для цього запрошення", ephemeral=True)
+                                    except Exception as e:
+                                        print(f"[ERROR] Помилка при схваленні: {str(e)}")
+                                        print(f"[ERROR] Тип помилки: {type(e)}")
+                                        import traceback
+                                        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+                                        await button_interaction.response.send_message(f"❌ Помилка при схваленні: {str(e)}", ephemeral=True)
+                                        return
+
+                                    try:
+                                        self.disable_buttons()
+                                        await button_interaction.message.edit(view=self)
+                                    except Exception as e:
+                                        print(f"[ERROR] Помилка при деактивації кнопок: {e}")
+
+                                @discord.ui.button(label="Відхилити", style=discord.ButtonStyle.danger)
+                                async def deny(self, button_interaction: discord.Interaction, button: Button):
+                                    try:
+                                        if str(member.id) in pending_nicknames:
+                                            del pending_nicknames[str(member.id)]
+                                            save_pending_nicknames()
+                                        
+                                        await member.kick(reason="Заявку відхилено")
+                                        await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
+                                    except Exception as e:
+                                        await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
                                     
-                                    await member.kick(reason="Заявку відхилено")
-                                    await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
-                                except Exception as e:
-                                    await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
-                                
-                                # Деактивуємо кнопки
-                                self.disable_buttons()
-                                await button_interaction.message.edit(view=self)
-                        
-                        view = JoinRequestView()
-                        await mod_channel_obj.send(embed=embed, view=view)
-                        await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
+                                    try:
+                                        self.disable_buttons()
+                                        await button_interaction.message.edit(view=self)
+                                    except Exception as e:
+                                        print(f"[ERROR] Помилка при деактивації кнопок: {e}")
+                            
+                            view = JoinRequestView()
+                            await mod_channel_obj.send(embed=embed, view=view)
+                            await interaction.response.send_message("✅ Ваш нікнейм збережено. Очікуйте схвалення модератором.", ephemeral=True)
+                        except Exception as e:
+                            print(f"[ERROR] Помилка при створенні заявки: {e}")
+                            await interaction.response.send_message("❌ Виникла помилка при створенні заявки", ephemeral=True)
 
                 # Створюємо кнопку для введення ніку
                 class SetNicknameView(View):
@@ -350,14 +371,13 @@ async def on_member_join(member):
                     await member.send("Будь ласка, вкажіть свій ігровий нікнейм:", view=SetNicknameView())
                 except Exception as e:
                     print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
-
+            
             # Якщо це звичайне запрошення - просто видаємо роль
-            else:
-                if role_id:
-                    role = guild.get_role(role_id)
-                    if role:
-                        await member.add_roles(role)
-                        print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
+            elif role_id:
+                role = guild.get_role(role_id)
+                if role:
+                    await member.add_roles(role)
+                    print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
 
     except Exception as e:
         print(f"[ERROR] Помилка обробки нового учасника: {e}")
@@ -738,10 +758,17 @@ def load_nick_notify_channel():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load nick_notify_channel.json: {e}")
+        return {}
 
 def save_nick_notify_channel():
-    with open(NICK_NOTIFY_CHANNEL_FILE, 'w', encoding='utf-8') as f:
-        json.dump(nick_notify_channel, f, ensure_ascii=False, indent=2)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(NICK_NOTIFY_CHANNEL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(nick_notify_channel, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Failed to save nick_notify_channel.json: {e}")
 
 nick_notify_channel = load_nick_notify_channel()
 
@@ -751,31 +778,19 @@ pending_nicknames = {}  # {user_id: nickname}
 
 def load_pending_nicknames():
     try:
-        # Перевіряємо наявність папки перед читанням файлу
-        if not os.path.exists(DATA_DIR):
-            print(f"[ERROR] Data directory does not exist at {DATA_DIR}")
-            return {}
-            
         with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             print(f"[DEBUG] Loaded pending_nicknames from file: {data}")
             return data
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"[DEBUG] Failed to load pending_nicknames: {e}")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load pending_nicknames.json: {e}")
         return {}
 
 def save_pending_nicknames():
     try:
-        # Перевіряємо наявність папки перед збереженням
-        if not os.path.exists(DATA_DIR):
-            print(f"[ERROR] Data directory does not exist at {DATA_DIR}")
-            try:
-                os.makedirs(DATA_DIR, exist_ok=True)
-                print(f"[DEBUG] Created data directory at {DATA_DIR}")
-        except Exception as e:
-                print(f"[ERROR] Failed to create data directory: {e}")
-                return
-                
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
             json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
         print(f"[DEBUG] Saved pending_nicknames to file: {pending_nicknames}")
@@ -1138,10 +1153,17 @@ def load_telegram_channels():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load telegram_channels.json: {e}")
+        return {}
 
 def save_telegram_channels():
-    with open(TELEGRAM_CHANNELS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(telegram_channels, f, ensure_ascii=False, indent=2)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(TELEGRAM_CHANNELS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(telegram_channels, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Failed to save telegram_channels.json: {e}")
 
 telegram_channels = load_telegram_channels()
 
@@ -1315,10 +1337,17 @@ def load_mod_channel():
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load mod_channel.json: {e}")
+        return {}
 
 def save_mod_channel():
-    with open(MOD_CHANNEL_FILE, 'w', encoding='utf-8') as f:
-        json.dump(mod_channel, f, ensure_ascii=False, indent=2)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(MOD_CHANNEL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(mod_channel, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Failed to save mod_channel.json: {e}")
 
 mod_channel = load_mod_channel()  # {guild_id: channel_id}
 
