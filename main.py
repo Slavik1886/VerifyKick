@@ -155,27 +155,6 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
-    print(f"[DEBUG] on_member_join: {member} ({member.id})")
-    print(f"[DEBUG] pending_nicknames: {pending_nicknames}")
-    nickname = pending_nicknames.pop(str(member.id), None)
-    print(f"[DEBUG] nickname found: {nickname}")
-    if nickname:
-        try:
-            await member.edit(nick=nickname)
-            print(f"[DEBUG] Nickname changed for {member} to {nickname}")
-            guild_id = str(member.guild.id)
-            notify_channel_id = nick_notify_channel.get(guild_id)
-            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
-            if notify_channel:
-                await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
-        except Exception as e:
-            print(f"[ERROR] Failed to change nickname for {member}: {e}")
-            guild_id = str(member.guild.id)
-            notify_channel_id = nick_notify_channel.get(guild_id)
-            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
-            if notify_channel:
-                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention}: {e}")
-        save_pending_nicknames()
     if member.bot:
         return
     
@@ -643,21 +622,6 @@ nick_notify_channel = load_nick_notify_channel()
 # Тимчасове зберігання ігрових ніків для заявок
 pending_nicknames = {}  # {user_id: nickname}
 
-PENDING_NICKNAMES_FILE = 'pending_nicknames.json'
-
-def load_pending_nicknames():
-    try:
-        with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def save_pending_nicknames():
-    with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
-
-pending_nicknames = load_pending_nicknames()
-
 class JoinRequestModal(Modal, title="Запит на приєднання"):
     reason = TextInput(label="Чому ви хочете приєднатися?", style=discord.TextStyle.paragraph, required=True, max_length=300)
     nickname = TextInput(label="Ваш ігровий нік (WoT)", required=True, max_length=32)
@@ -692,17 +656,13 @@ class JoinRequestView(View):
         if not user:
             await interaction.response.send_message("Користувача не знайдено.", ephemeral=True)
             return
+        # --- Зміна ніку та повідомлення у канал ---
         guild = interaction.guild
         guild_id = str(guild.id)
-        # --- Замість pop, просто беремо nickname і зберігаємо у pending_nicknames ---
-        nickname = pending_nicknames.get(str(self.user_id), None)
+        nickname = pending_nicknames.pop(self.user_id, None)
         member = guild.get_member(self.user_id) if guild else None
         notify_channel_id = nick_notify_channel.get(guild_id)
         notify_channel = guild.get_channel(notify_channel_id) if notify_channel_id else None
-        # --- Зберігаємо бажаний нік у pending_nicknames (файл) ---
-        if nickname:
-            pending_nicknames[str(self.user_id)] = nickname
-            save_pending_nicknames()
         try:
             if member and nickname:
                 await member.edit(nick=nickname)
@@ -711,6 +671,7 @@ class JoinRequestView(View):
         except Exception as e:
             if notify_channel:
                 await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention if member else self.user_id}: {e}")
+        # --- Кінець блоку ---
         try:
             await user.send(f"Ваша заявка схвалена! Ось запрошення: {GUILD_INVITE_LINK}")
             await interaction.response.send_message("Користувача повідомлено про схвалення.", ephemeral=True)
