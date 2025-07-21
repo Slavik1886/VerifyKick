@@ -155,6 +155,27 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def on_member_join(member):
+    print(f"[DEBUG] on_member_join: {member} ({member.id})")
+    print(f"[DEBUG] pending_nicknames: {pending_nicknames}")
+    nickname = pending_nicknames.pop(str(member.id), None)
+    print(f"[DEBUG] nickname found: {nickname}")
+    if nickname:
+        try:
+            await member.edit(nick=nickname)
+            print(f"[DEBUG] Nickname changed for {member} to {nickname}")
+            guild_id = str(member.guild.id)
+            notify_channel_id = nick_notify_channel.get(guild_id)
+            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
+            if notify_channel:
+                await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{nickname}** при вступі на сервер!")
+        except Exception as e:
+            print(f"[ERROR] Failed to change nickname for {member}: {e}")
+            guild_id = str(member.guild.id)
+            notify_channel_id = nick_notify_channel.get(guild_id)
+            notify_channel = member.guild.get_channel(notify_channel_id) if notify_channel_id else None
+            if notify_channel:
+                await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention}: {e}")
+        save_pending_nicknames()
     if member.bot:
         return
     
@@ -622,6 +643,21 @@ nick_notify_channel = load_nick_notify_channel()
 # Тимчасове зберігання ігрових ніків для заявок
 pending_nicknames = {}  # {user_id: nickname}
 
+PENDING_NICKNAMES_FILE = 'pending_nicknames.json'
+
+def load_pending_nicknames():
+    try:
+        with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_pending_nicknames():
+    with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
+
+pending_nicknames = load_pending_nicknames()
+
 class JoinRequestModal(Modal, title="Запит на приєднання"):
     reason = TextInput(label="Чому ви хочете приєднатися?", style=discord.TextStyle.paragraph, required=True, max_length=300)
     nickname = TextInput(label="Ваш ігровий нік (WoT)", required=True, max_length=32)
@@ -656,13 +692,17 @@ class JoinRequestView(View):
         if not user:
             await interaction.response.send_message("Користувача не знайдено.", ephemeral=True)
             return
-        # --- Зміна ніку та повідомлення у канал ---
         guild = interaction.guild
         guild_id = str(guild.id)
-        nickname = pending_nicknames.pop(self.user_id, None)
+        # --- Замість pop, просто беремо nickname і зберігаємо у pending_nicknames ---
+        nickname = pending_nicknames.get(str(self.user_id), None)
         member = guild.get_member(self.user_id) if guild else None
         notify_channel_id = nick_notify_channel.get(guild_id)
         notify_channel = guild.get_channel(notify_channel_id) if notify_channel_id else None
+        # --- Зберігаємо бажаний нік у pending_nicknames (файл) ---
+        if nickname:
+            pending_nicknames[str(self.user_id)] = nickname
+            save_pending_nicknames()
         try:
             if member and nickname:
                 await member.edit(nick=nickname)
@@ -671,7 +711,6 @@ class JoinRequestView(View):
         except Exception as e:
             if notify_channel:
                 await notify_channel.send(f"⚠️ Не вдалося змінити нік {member.mention if member else self.user_id}: {e}")
-        # --- Кінець блоку ---
         try:
             await user.send(f"Ваша заявка схвалена! Ось запрошення: {GUILD_INVITE_LINK}")
             await interaction.response.send_message("Користувача повідомлено про схвалення.", ephemeral=True)
@@ -694,156 +733,6 @@ class JoinRequestView(View):
 @bot.tree.command(name="request_join", description="Подати заявку на приєднання до сервера")
 async def request_join(interaction: discord.Interaction):
     await interaction.response.send_modal(JoinRequestModal())
-
-# ========== WoT NEWS AUTOPOST ========== 
-# ВИДАЛЕНО ВСІ ТАСКИ ТА ФУНКЦІЇ ДЛЯ АВТОПОСТУ З ІНШИХ ДЖЕРЕЛ, КРІМ TELEGRAM
-# wot_news_settings = {}  # guild_id: channel_id
-# wot_news_last_url = {}  # guild_id: last_news_url
-# WOT_RSS_URL = "https://worldoftanks.eu/uk/rss/news/"
-# @bot.tree.command(name="setup_wot_news", description="Вказати канал для автоматичних новин World of Tanks")
-# ...
-# async def fetch_wot_news():
-#     ...
-# async def post_rss_news_to_discord(...):
-#     ...
-# @tasks.loop(minutes=2)
-# async def wot_official_news_task():
-#     ...
-# @tasks.loop(minutes=60)
-# async def wot_news_autopost():
-#     ...
-# @tasks.loop(minutes=15)
-# async def wot_external_news_task():
-#     ...
-# ...
-# ВИДАЛЕНО ВСІ ЇХ ВИКЛИКИ У on_ready
-# wot_news_autopost.start()
-# wot_official_news_task.start()
-# wot_external_news_task.start()
-# ...
-# ВИДАЛЕНО ВСІ ЗМІННІ, ЩО СТОСУЮТЬСЯ ЦИХ ДЖЕРЕЛ
-# GOOGLE_NEWS_RSS = ...
-# YOUTUBE_WOT_RSS = ...
-# WOT_UA_TELEGRAM_RSS = ...
-# WOTCLUE_EU_TELEGRAM_RSS = ...
-# wotclue_eu_news_last_url = ...
-# wot_external_news_last = ...
-# external_news_queue = ...
-# ...
-# ТЕПЕР ПУБЛІКАЦІЯ НОВИН ВІДБУВАЄТЬСЯ ЛИШЕ ЧЕРЕЗ telegram_channels_autopost І /track_telegram
-
-# Telegram Wotclue новини
-# @tasks.loop(minutes=10)
-# async def telegram_wotclue_news_task():
-#     for guild in bot.guilds:
-#         guild_id = str(guild.id)
-#         if guild_id not in wot_news_settings:
-#             continue
-#         channel = guild.get_channel(wot_news_settings[guild_id])
-#         if not channel:
-#             continue
-#         try:
-#             news = await fetch_telegram_wotclue_news()
-#             if not news:
-#                 continue
-#             last_url = wotclue_news_last_url.get(guild_id)
-#             if not last_url:
-#                 wotclue_news_last_url[guild_id] = news[0]['link']
-#                 continue
-#             new_entries = []
-#             for entry in news:
-#                 if entry['link'] == last_url:
-#                     break
-#                 new_entries.append(entry)
-#             for entry in reversed(new_entries):
-#                 embed = discord.Embed(
-#                     title=entry['title'],
-#                     url=entry['link'],
-#                     description=clean_html(entry['summary']),
-#                     color=discord.Color.teal(),
-#                     timestamp=datetime.utcnow()
-#                 )
-#                 embed.set_footer(text="Wotclue EU | Telegram")
-#                 await channel.send(embed=embed)
-#                 wotclue_news_last_url[guild_id] = entry['link']
-#         except Exception as e:
-#             print(f"[Telegram Wotclue News] Error: {e}")
-
-# Telegram WoT UA новини
-# @tasks.loop(minutes=10)
-# async def telegram_wotua_news_task():
-#     for guild in bot.guilds:
-#         guild_id = str(guild.id)
-#         if guild_id not in wot_news_settings:
-#             continue
-#         channel = guild.get_channel(wot_news_settings[guild_id])
-#         if not channel:
-#             continue
-#         try:
-#             news = await fetch_rss_news(WOT_UA_TELEGRAM_RSS)
-#             if not news:
-#                 continue
-#             last_url = wotua_news_last_url.get(guild_id)
-#             if not last_url:
-#                 wotua_news_last_url[guild_id] = news[0]['link']
-#                 continue
-#             new_entries = []
-#             for entry in news:
-#                 if entry['link'] == last_url:
-#                     break
-#                 new_entries.append(entry)
-#             for entry in reversed(new_entries):
-#                 embed = discord.Embed(
-#                     title=entry['title'],
-#                     url=entry['link'],
-#                     description=clean_html(entry['summary']),
-#                     color=discord.Color.teal(),
-#                     timestamp=datetime.utcnow()
-#                 )
-#                 embed.set_footer(text="World of Tanks Ukraine | Telegram")
-#                 await channel.send(embed=embed)
-#                 wotua_news_last_url[guild_id] = entry['link']
-#         except Exception as e:
-#             print(f"[Telegram WoT UA News] Error: {e}")
-
-# Telegram WOTCLUE EU новини
-# @tasks.loop(minutes=10)
-# async def telegram_wotclue_eu_news_task():
-#     for guild in bot.guilds:
-#         guild_id = str(guild.id)
-#         if guild_id not in wot_news_settings:
-#             continue
-#         channel = guild.get_channel(wot_news_settings[guild_id])
-#         if not channel:
-#             continue
-#         try:
-#             news = await fetch_rss_news(WOTCLUE_EU_TELEGRAM_RSS)
-#             if not news:
-#                 continue
-#             last_url = wotclue_eu_news_last_url.get(guild_id)
-#             if not last_url:
-#                 wotclue_eu_news_last_url[guild_id] = news[0]['link']
-#                 continue
-#             new_entries = []
-#             for entry in news:
-#                 if entry['link'] == last_url:
-#                     break
-#                 new_entries.append(entry)
-#             for entry in reversed(new_entries):
-#                 embed = discord.Embed(
-#                     title=entry['title'],
-#                     url=entry['link'],
-#                     description=clean_html(entry['summary']),
-#                     color=discord.Color.teal(),
-#                     timestamp=datetime.utcnow()
-#                 )
-#                 embed.set_footer(text="WOTCLUE EU | Telegram")
-#                 await channel.send(embed=embed)
-#                 wotclue_eu_news_last_url[guild_id] = entry['link']
-#         except Exception as e:
-#             print(f"[Telegram WOTCLUE EU News] Error: {e}")
-
-# ========== ДОДАТКОВІ АДМІН-КОМАНДИ ========== 
 
 @bot.tree.command(name="purge", description="Видалити N останніх повідомлень у каналі")
 @app_commands.describe(amount="Кількість повідомлень для видалення")
