@@ -184,6 +184,9 @@ async def on_member_join(member):
             if invite.uses > cached_uses:
                 used_invite = invite
                 break
+        # Зберігаємо код інвайту для цього користувача
+        if used_invite:
+            pending_invites[str(member.id)] = used_invite.code
 
         if used_invite:
             await update_invite_cache(guild)
@@ -251,71 +254,51 @@ async def on_member_join(member):
                             async def approve(self, button_interaction: discord.Interaction, button: Button):
                                 print(f"[DEBUG] Кнопку 'Схвалити' натиснув: {button_interaction.user}")
                                 try:
-                                    # Видаємо роль відповідно до запрошення
                                     guild = button_interaction.guild
                                     print(f"[DEBUG] Guild ID: {guild.id}")
-                                    
-                                    # Оновлюємо кеш ПЕРЕД перевіркою
-                                    await update_invite_cache(guild)
-                                    
-                                    current_invites = await guild.invites()
-                                    print(f"[DEBUG] Поточні запрошення: {[(inv.code, inv.uses) for inv in current_invites]}")
-                                    print(f"[DEBUG] Кеш запрошень: {invite_cache.get(guild.id, {})}")
-                                    
-                                    used_invite = None
-                                    for invite in current_invites:
-                                        cached_uses = invite_cache.get(guild.id, {}).get(invite.code, 0)
-                                        if invite.uses > cached_uses:
-                                            used_invite = invite
-                                            print(f"[DEBUG] Знайдено використане запрошення: {invite.code} (uses: {invite.uses}, cached: {cached_uses})")
-                                            break
-                                    
-                                    if used_invite:
-                                        # Оновлюємо кеш ПІСЛЯ визначення
-                                        await update_invite_cache(guild)
-                                        guild_roles = invite_roles.get(str(guild.id), {})
-                                        print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
-                                        role_id = guild_roles.get(used_invite.code)
-                                        print(f"[DEBUG] ID ролі для запрошення {used_invite.code}: {role_id}")
-                                        
-                                        if role_id:
-                                            role = guild.get_role(role_id)
-                                            print(f"[DEBUG] Знайдена роль: {role}")
-                                            if role:
-                                                print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
-                                                await member.add_roles(role)
-                                                assigned_role = role
-                                                
-                                                # Змінюємо нік після схвалення
-                                                saved_nick = pending_nicknames.pop(str(member.id), None)
-                                                print(f"[DEBUG] Збережений нік: {saved_nick}")
-                                                if saved_nick:
-                                                    try:
-                                                        print(f"[DEBUG] Змінюємо нік на: {saved_nick}")
-                                                        await member.edit(nick=saved_nick)
-                                                        save_pending_nicknames()
-                                                        await button_interaction.response.send_message(
-                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
-                                                            ephemeral=True
-                                                        )
-                                                    except Exception as e:
-                                                        print(f"[ERROR] Помилка зміни ніку: {e}")
-                                                        await button_interaction.response.send_message(
-                                                            f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
-                                                            ephemeral=True
-                                                        )
-                                                else:
+                                    # Беремо код інвайту з pending_invites
+                                    invite_code = pending_invites.get(str(member.id))
+                                    print(f"[DEBUG] Код інвайту для користувача: {invite_code}")
+                                    if not invite_code:
+                                        await button_interaction.response.send_message("❌ Не вдалося визначити інвайт користувача", ephemeral=True)
+                                        return
+                                    guild_roles = invite_roles.get(str(guild.id), {})
+                                    print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
+                                    role_id = guild_roles.get(invite_code)
+                                    print(f"[DEBUG] ID ролі для запрошення {invite_code}: {role_id}")
+                                    if role_id:
+                                        role = guild.get_role(role_id)
+                                        print(f"[DEBUG] Знайдена роль: {role}")
+                                        if role:
+                                            print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
+                                            await member.add_roles(role)
+                                            # Змінюємо нік після схвалення
+                                            saved_nick = pending_nicknames.pop(str(member.id), None)
+                                            print(f"[DEBUG] Збережений нік: {saved_nick}")
+                                            if saved_nick:
+                                                try:
+                                                    print(f"[DEBUG] Змінюємо нік на: {saved_nick}")
+                                                    await member.edit(nick=saved_nick)
+                                                    save_pending_nicknames()
                                                     await button_interaction.response.send_message(
-                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}",
+                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
+                                                        ephemeral=True
+                                                    )
+                                                except Exception as e:
+                                                    print(f"[ERROR] Помилка зміни ніку: {e}")
+                                                    await button_interaction.response.send_message(
+                                                        f"✅ Користувача схвалено\nНадано роль {role.mention}\n❌ Помилка зміни ніку: {e}",
                                                         ephemeral=True
                                                     )
                                             else:
-                                                print(f"[ERROR] Роль {role_id} не знайдена на сервері")
+                                                await button_interaction.response.send_message(
+                                                    f"✅ Користувача схвалено\nНадано роль {role.mention}",
+                                                    ephemeral=True
+                                                )
                                         else:
-                                            print(f"[ERROR] Не знайдено роль для запрошення {used_invite.code}")
+                                            print(f"[ERROR] Роль {role_id} не знайдена на сервері")
                                     else:
-                                        print("[ERROR] Не вдалося визначити використане запрошення")
-                                
+                                        print(f"[ERROR] Не знайдено роль для запрошення {invite_code}")
                                 except Exception as e:
                                     print(f"[ERROR] Помилка при схваленні: {str(e)}")
                                     print(f"[ERROR] Тип помилки: {type(e)}")
@@ -1319,6 +1302,9 @@ async def set_nick_notify_channel(interaction: discord.Interaction, channel: dis
     nick_notify_channel[guild_id] = channel.id
     save_nick_notify_channel()
     await interaction.response.send_message(f"✅ Канал для повідомлень про зміну ніку встановлено: {channel.mention}", ephemeral=True)
+
+# Для збереження коду інвайту для кожного нового учасника
+pending_invites = {}  # {user_id: invite_code}
 
 if __name__ == '__main__':
     print("Запуск бота...")
