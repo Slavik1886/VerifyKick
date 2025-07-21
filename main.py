@@ -174,7 +174,7 @@ async def on_member_join(member):
     
     guild = member.guild
     assigned_role = None
-
+    
     try:
         # Знаходимо запрошення, за яким зайшов користувач
         current_invites = await guild.invites()
@@ -187,12 +187,12 @@ async def on_member_join(member):
         # Зберігаємо код інвайту для цього користувача
         if used_invite:
             pending_invites[str(member.id)] = used_invite.code
-
+        
         if used_invite:
             await update_invite_cache(guild)
             guild_roles = invite_roles.get(str(guild.id), {})
             role_id = guild_roles.get(used_invite.code)
-
+            
             # Якщо це запрошення потребує модерації
             if used_invite.code == MODERATION_INVITE_CODE:
                 mod_channel_id = mod_channel.get(str(guild.id))
@@ -267,12 +267,12 @@ async def on_member_join(member):
                                     print(f"[DEBUG] Ролі для запрошень: {guild_roles}")
                                     role_id = guild_roles.get(invite_code)
                                     print(f"[DEBUG] ID ролі для запрошення {invite_code}: {role_id}")
-                                    if role_id:
-                                        role = guild.get_role(role_id)
+            if role_id:
+                role = guild.get_role(role_id)
                                         print(f"[DEBUG] Знайдена роль: {role}")
-                                        if role:
+                if role:
                                             print(f"[DEBUG] Додаємо роль {role.name} користувачу {member}")
-                                            await member.add_roles(role)
+                        await member.add_roles(role)
                                             # Змінюємо нік після схвалення
                                             saved_nick = pending_nicknames.pop(str(member.id), None)
                                             print(f"[DEBUG] Збережений нік: {saved_nick}")
@@ -300,7 +300,7 @@ async def on_member_join(member):
                                             print(f"[ERROR] Роль {role_id} не знайдена на сервері")
                                     else:
                                         print(f"[ERROR] Не знайдено роль для запрошення {invite_code}")
-                                except Exception as e:
+            except Exception as e:
                                     print(f"[ERROR] Помилка при схваленні: {str(e)}")
                                     print(f"[ERROR] Тип помилки: {type(e)}")
                                     import traceback
@@ -772,7 +772,7 @@ def save_pending_nicknames():
             try:
                 os.makedirs(DATA_DIR, exist_ok=True)
                 print(f"[DEBUG] Created data directory at {DATA_DIR}")
-            except Exception as e:
+        except Exception as e:
                 print(f"[ERROR] Failed to create data directory: {e}")
                 return
                 
@@ -1332,22 +1332,6 @@ async def set_mod_channel(interaction: discord.Interaction, channel: discord.Tex
     save_mod_channel()
     await interaction.response.send_message(f"✅ Канал для заявок встановлено: {channel.mention}", ephemeral=True)
 
-# ... існуючий код ...
-NICK_LOCK_ROLES_FILE = os.path.join(DATA_DIR, 'nick_lock_roles.json')
-
-def load_nick_lock_roles():
-    try:
-        with open(NICK_LOCK_ROLES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def save_nick_lock_roles():
-    with open(NICK_LOCK_ROLES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(nick_lock_roles, f, ensure_ascii=False, indent=2)
-
-nick_lock_roles = load_nick_lock_roles()  # {guild_id: [role_id, ...]}
-
 if __name__ == '__main__':
     print("Запуск бота...")
-    bot.run(TOKEN)
+    bot.run(TOKEN) 
