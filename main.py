@@ -298,13 +298,60 @@ async def on_member_join(member):
                                                         await member.edit(nick=saved_nick)
                                                         save_pending_nicknames()
                                                         
-                                                        # Надсилаємо сповіщення про зміну ніку
+                                                        # --- Надсилання сповіщення у канал зміни ніку ---
                                                         notify_channel_id = nick_notify_channel.get(str(guild.id))
                                                         if notify_channel_id:
                                                             notify_channel = guild.get_channel(notify_channel_id)
                                                             if notify_channel:
-                                                                await notify_channel.send(f"✅ {member.mention} отримав нікнейм **{saved_nick}** при вступі на сервер!")
-
+                                                                await notify_channel.send(
+                                                                    f"✅ {member.mention} отримав нікнейм **{saved_nick}** при вступі на сервер!\n"
+                                                                    f"Прийняв: {button_interaction.user.mention}\n"
+                                                                    f"Надано роль: {role.mention}"
+                                                                )
+                                                        # --- Надсилання привітального повідомлення ---
+                                                        if str(guild.id) in welcome_messages:
+                                                            channel_id = welcome_messages[str(guild.id)]["channel_id"]
+                                                            channel = guild.get_channel(channel_id)
+                                                            if channel:
+                                                                try:
+                                                                    inviter = "Невідомо"
+                                                                    if invite_code and used_invite and used_invite.inviter:
+                                                                        inviter = used_invite.inviter.mention
+                                                                    role_info = role.mention if role else "Не призначено"
+                                                                    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+                                                                    embed = discord.Embed(
+                                                                        title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
+                                                                        color=discord.Color.green(),
+                                                                        timestamp=kyiv_time
+                                                                    )
+                                                                    embed.set_thumbnail(url=member.display_avatar.url)
+                                                                    embed.add_field(
+                                                                        name="Користувач",
+                                                                        value=f"{member.mention}\n{member.display_name}",
+                                                                        inline=True
+                                                                    )
+                                                                    embed.add_field(
+                                                                        name="Запросив",
+                                                                        value=inviter,
+                                                                        inline=True
+                                                                    )
+                                                                    embed.add_field(
+                                                                        name="Призначена роль",
+                                                                        value=role_info,
+                                                                        inline=False
+                                                                    )
+                                                                    embed.add_field(
+                                                                        name="Дата реєстрації в Discord",
+                                                                        value=member.created_at.strftime("%d.%m.%Y"),
+                                                                        inline=False
+                                                                    )
+                                                                    embed.set_footer(
+                                                                        text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
+                                                                        icon_url=guild.icon.url if guild.icon else None
+                                                                    )
+                                                                    await channel.send(embed=embed)
+                                                                except Exception as e:
+                                                                    print(f"[ERROR] Помилка при відправці привітання: {e}")
                                                         await button_interaction.response.send_message(
                                                             f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
                                                             ephemeral=True
