@@ -308,14 +308,15 @@ async def on_member_join(member):
                                                                     f"Прийняв: {button_interaction.user.mention}\n"
                                                                     f"Надано роль: {role.mention}"
                                                                 )
-                                                        # --- Надсилання привітального повідомлення ---
+                                                        
+                                                        # --- Надсилання привітального повідомлення після схвалення ---
                                                         if str(guild.id) in welcome_messages:
                                                             channel_id = welcome_messages[str(guild.id)]["channel_id"]
                                                             channel = guild.get_channel(channel_id)
                                                             if channel:
                                                                 try:
                                                                     inviter = "Невідомо"
-                                                                    if invite_code and used_invite and used_invite.inviter:
+                                                                    if used_invite and used_invite.inviter:
                                                                         inviter = used_invite.inviter.mention
                                                                     role_info = role.mention if role else "Не призначено"
                                                                     kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
@@ -427,58 +428,58 @@ async def on_member_join(member):
                 except Exception as e:
                     print(f"[ERROR] Не вдалося надіслати повідомлення користувачу {member}: {e}")
             
-            # Якщо це звичайне запрошення - просто видаємо роль
+            # Якщо це звичайне запрошення - просто видаємо роль і надсилаємо привітання
             elif role_id:
                 role = guild.get_role(role_id)
                 if role:
                     await member.add_roles(role)
                     assigned_role = role
                     print(f"Надано роль {role.name} користувачу {member} за запрошення {used_invite.code}")
-
-        # --- Обробка привітальних повідомлень ---
-        if str(guild.id) in welcome_messages:
-            channel_id = welcome_messages[str(guild.id)]["channel_id"]
-            channel = guild.get_channel(channel_id)
-            if channel:
-                try:
-                    inviter = "Невідомо"
-                    if used_invite and used_invite.inviter:
-                        inviter = used_invite.inviter.mention
-                    role_info = assigned_role.mention if assigned_role else "Не призначено"
-                    kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
-                    embed = discord.Embed(
-                        title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
-                        color=discord.Color.green(),
-                        timestamp=kyiv_time
-                    )
-                    embed.set_thumbnail(url=member.display_avatar.url)
-                    embed.add_field(
-                        name="Користувач",
-                        value=f"{member.mention}\n{member.display_name}",
-                        inline=True
-                    )
-                    embed.add_field(
-                        name="Запросив",
-                        value=inviter,
-                        inline=True
-                    )
-                    embed.add_field(
-                        name="Призначена роль",
-                        value=role_info,
-                        inline=False
-                    )
-                    embed.add_field(
-                        name="Дата реєстрації в Discord",
-                        value=member.created_at.strftime("%d.%m.%Y"),
-                        inline=False
-                    )
-                    embed.set_footer(
-                        text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
-                        icon_url=guild.icon.url if guild.icon else None
-                    )
-                    await channel.send(embed=embed)
-                except Exception as e:
-                    print(f"[ERROR] Помилка при відправці привітання: {e}")
+                    
+                    # Надсилаємо привітальне повідомлення для звичайних запрошень
+                    if str(guild.id) in welcome_messages:
+                        channel_id = welcome_messages[str(guild.id)]["channel_id"]
+                        channel = guild.get_channel(channel_id)
+                        if channel:
+                            try:
+                                inviter = "Невідомо"
+                                if used_invite and used_invite.inviter:
+                                    inviter = used_invite.inviter.mention
+                                role_info = assigned_role.mention if assigned_role else "Не призначено"
+                                kyiv_time = datetime.now(pytz.timezone('Europe/Kiev'))
+                                embed = discord.Embed(
+                                    title=f"Ласкаво просимо👋на сервер, {member.display_name}!",
+                                    color=discord.Color.green(),
+                                    timestamp=kyiv_time
+                                )
+                                embed.set_thumbnail(url=member.display_avatar.url)
+                                embed.add_field(
+                                    name="Користувач",
+                                    value=f"{member.mention}\n{member.display_name}",
+                                    inline=True
+                                )
+                                embed.add_field(
+                                    name="Запросив",
+                                    value=inviter,
+                                    inline=True
+                                )
+                                embed.add_field(
+                                    name="Призначена роль",
+                                    value=role_info,
+                                    inline=False
+                                )
+                                embed.add_field(
+                                    name="Дата реєстрації в Discord",
+                                    value=member.created_at.strftime("%d.%m.%Y"),
+                                    inline=False
+                                )
+                                embed.set_footer(
+                                    text=f"{guild.name} | Приєднався: {kyiv_time.strftime('%d.%m.%Y о %H:%M')}",
+                                    icon_url=guild.icon.url if guild.icon else None
+                                )
+                                await channel.send(embed=embed)
+                            except Exception as e:
+                                print(f"[ERROR] Помилка при відправці привітання: {e}")
                     
     except Exception as e:
         print(f"[ERROR] Помилка обробки нового учасника: {e}")
