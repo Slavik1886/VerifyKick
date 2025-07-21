@@ -226,14 +226,26 @@ async def on_member_join(member):
                                     item.disabled = True
 
                             async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                                # Перевіряємо, чи є користувач власником сервера або має роль модератора
-                                is_owner = interaction.user.id == interaction.guild.owner_id
-                                has_mod_role = interaction.user.get_role(MODERATOR_ROLE_ID) is not None
-                                
-                                if not (is_owner or has_mod_role):
+                                try:
+                                    # Перевіряємо, чи є користувач власником сервера або має роль модератора
+                                    is_owner = interaction.user.id == interaction.guild.owner_id
+                                    mod_role = interaction.guild.get_role(MODERATOR_ROLE_ID)
+                                    has_mod_role = mod_role in interaction.user.roles if mod_role else False
+                                    
+                                    print(f"[DEBUG] Перевірка прав модерації:")
+                                    print(f"[DEBUG] User ID: {interaction.user.id}")
+                                    print(f"[DEBUG] Is Owner: {is_owner}")
+                                    print(f"[DEBUG] Has Mod Role: {has_mod_role}")
+                                    print(f"[DEBUG] User Roles: {[role.id for role in interaction.user.roles]}")
+                                    
+                                    if is_owner or has_mod_role:
+                                        return True
+                                        
                                     await interaction.response.send_message("❌ У вас немає прав на модерацію заявок", ephemeral=True)
                                     return False
-                                return True
+                                except Exception as e:
+                                    print(f"[ERROR] Помилка перевірки прав: {e}")
+                                    return False
 
                             @discord.ui.button(label="Схвалити", style=discord.ButtonStyle.success)
                             async def approve(self, button_interaction: discord.Interaction, button: Button):
