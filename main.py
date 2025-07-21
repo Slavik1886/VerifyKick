@@ -1463,6 +1463,103 @@ async def set_mod_channel(interaction: discord.Interaction, channel: discord.Tex
     save_mod_channel()
     await interaction.response.send_message(f"✅ Канал для заявок встановлено: {channel.mention}", ephemeral=True)
 
+# === ОФІЦІЙНІ НОВИНИ WoT/Wargaming ===
+OFFICIAL_NEWS_CHANNELS_FILE = os.path.join(DATA_DIR, 'official_news_channels.json')
+official_news_channels = {}  # {guild_id: channel_id}
+
+def load_official_news_channels():
+    try:
+        with open(OFFICIAL_NEWS_CHANNELS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    except Exception as e:
+        print(f"[ERROR] Failed to load official_news_channels.json: {e}")
+        return {}
+
+def save_official_news_channels():
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(OFFICIAL_NEWS_CHANNELS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(official_news_channels, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Failed to save official_news_channels.json: {e}")
+
+official_news_channels = load_official_news_channels()
+
+@bot.tree.command(name="set_official_news_channel", description="Встановити канал для офіційних новин WoT/Wargaming")
+@app_commands.describe(channel="Канал для офіційних новин")
+async def set_official_news_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    guild_id = str(interaction.guild.id)
+    official_news_channels[guild_id] = channel.id
+    save_official_news_channels()
+    await interaction.response.send_message(f"✅ Канал для офіційних новин встановлено: {channel.mention}", ephemeral=True)
+
+@tasks.loop(minutes=60)
+async def official_news_autopost():
+    sources = [
+        {"name": "Google News WoT", "url": GOOGLE_NEWS_RSS},
+        {"name": "YouTube WoT Official", "url": YOUTUBE_WOT_RSS},
+        # Додайте інші офіційні джерела тут за потреби
+    ]
+    for guild in bot.guilds:
+        guild_id = str(guild.id)
+        if guild_id not in official_news_channels:
+            continue
+        channel = guild.get_channel(official_news_channels[guild_id])
+        if not channel:
+            continue
+        for source in sources:
+            try:
+                news = await fetch_rss_news(source["url"])
+                if not news:
+                    continue
+                last_url_file = os.path.join(DATA_DIR, f'official_news_last_{guild_id}_{source["name"]}.json')
+                try:
+                    with open(last_url_file, 'r', encoding='utf-8') as f:
+                        last_url = json.load(f).get('last_url')
+                except:
+                    last_url = None
+                new_entries = []
+                for n in news:
+                    if n['link'] == last_url:
+                        break
+                    new_entries.append(n)
+                if not new_entries:
+                    continue
+                for n in reversed(new_entries):
+                    post_text = clean_html(n.get('summary') or n.get('description') or '')
+                    if not post_text:
+                        post_text = n.get('title', '')
+                    embed = discord.Embed(
+                        title=n['title'],
+                        url=n['link'],
+                        description=post_text,
+                        color=discord.Color.gold(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.set_footer(text=f"Офіційне джерело: {source['name']}")
+                    if n.get('image'):
+                        embed.set_image(url=n['image'])
+                    await channel.send(embed=embed)
+                    with open(last_url_file, 'w', encoding='utf-8') as f:
+                        json.dump({'last_url': n['link']}, f)
+            except Exception as e:
+                print(f"[OfficialNews] Error for {source['name']}: {e}")
+
+# Додаємо запуск таску у on_ready
+old_on_ready = bot.on_ready
+async def new_on_ready():
+    if old_on_ready:
+        await old_on_ready()
+    try:
+        official_news_autopost.start()
+    except Exception as e:
+        print(f"[ERROR] Не вдалося запустити official_news_autopost: {e}")
+bot.on_ready = new_on_ready
+
 if __name__ == '__main__':
     print("Запуск бота...")
     bot.run(TOKEN) 
