@@ -40,26 +40,30 @@ invite_cache = {}
 # Система привітальних повідомлень
 welcome_messages = {}
 
+# Вказуємо папку для постійного зберігання даних
+DATA_DIR = "/data/"
+os.makedirs(DATA_DIR, exist_ok=True)
+
 def load_invite_data():
     try:
-        with open('invite_roles.json', 'r') as f:
+        with open(os.path.join(DATA_DIR, 'invite_roles.json'), 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 def save_invite_data():
-    with open('invite_roles.json', 'w') as f:
+    with open(os.path.join(DATA_DIR, 'invite_roles.json'), 'w') as f:
         json.dump(invite_roles, f)
 
 def load_welcome_data():
     try:
-        with open('welcome_messages.json', 'r') as f:
+        with open(os.path.join(DATA_DIR, 'welcome_messages.json'), 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 def save_welcome_data():
-    with open('welcome_messages.json', 'w') as f:
+    with open(os.path.join(DATA_DIR, 'welcome_messages.json'), 'w') as f:
         json.dump(welcome_messages, f)
 
 invite_roles = load_invite_data()
@@ -622,7 +626,7 @@ MOD_CHANNEL_ID = 1318890524643557406  # <-- ID каналу для модера�
 GUILD_INVITE_LINK = "https://discord.gg/yourinvite"  # <-- Вкажіть посилання на запрошення
 
 # === ДОДАТКОВІ СТРУКТУРИ ДЛЯ ЗМІНИ НІКУ ===
-NICK_NOTIFY_CHANNEL_FILE = 'nick_notify_channel.json'
+NICK_NOTIFY_CHANNEL_FILE = os.path.join(DATA_DIR, 'nick_notify_channel.json')
 nick_notify_channel = {}  # {guild_id: channel_id}
 
 def load_nick_notify_channel():
@@ -639,7 +643,7 @@ def save_nick_notify_channel():
 nick_notify_channel = load_nick_notify_channel()
 
 # Тимчасове зберігання ігрових ніків для заявок
-PENDING_NICKNAMES_FILE = 'pending_nicknames.json'
+PENDING_NICKNAMES_FILE = os.path.join(DATA_DIR, 'pending_nicknames.json')
 pending_nicknames = {}  # {user_id: nickname}
 
 def load_pending_nicknames():
@@ -1063,7 +1067,7 @@ def extract_first_img_src(html):
     return match.group(1) if match else None
 
 # === ДОДАТКОВІ СТРУКТУРИ ДЛЯ TELEGRAM-КАНАЛІВ ===
-TELEGRAM_CHANNELS_FILE = 'telegram_channels.json'
+TELEGRAM_CHANNELS_FILE = os.path.join(DATA_DIR, 'telegram_channels.json')
 telegram_channels = {}  # {guild_id: [{telegram: str, discord_channel: int, last_url: str}]}
 
 def load_telegram_channels():
