@@ -684,34 +684,25 @@ class SendEmbedChannelDropdown(Select):
         if interaction.response.is_done():
             await interaction.followup.send("Виникла помилка: interaction вже оброблено.", ephemeral=True)
             return
-        await interaction.response.send_modal(SendEmbedTitleModal())
+        await interaction.response.send_modal(SendEmbedModal())
         self.parent_view.stop()
 
-class SendEmbedTitleModal(Modal):
+# === Замість двох модалей — один ===
+class SendEmbedModal(Modal):
     def __init__(self):
-        super().__init__(title="Введіть заголовок")
+        super().__init__(title="Створити Embed")
         self.title_input = TextInput(label="Заголовок", required=True, max_length=256)
-        self.add_item(self.title_input)
-    async def on_submit(self, interaction):
-        data = send_embed_cache.get(interaction.user.id)
-        if not data:
-            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
-            return
-        data.title = self.title_input.value
-        await interaction.response.send_modal(SendEmbedDescriptionModal())
-
-class SendEmbedDescriptionModal(Modal):
-    def __init__(self):
-        super().__init__(title="Введіть текст повідомлення")
         self.description_input = TextInput(label="Текст повідомлення", style=discord.TextStyle.long, required=True, max_length=2000)
+        self.add_item(self.title_input)
         self.add_item(self.description_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.get(interaction.user.id)
         if not data:
             await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
             return
+        data.title = self.title_input.value
         data.description = self.description_input.value
-        # Після тексту — запит на thumbnail
+        # Далі — thumbnail
         await interaction.response.send_message(
             "Бажаєте додати зображення-колонтитул (thumbnail)? Завантажте файл або натисніть 'Пропустити'.",
             view=SendEmbedImageUploadView(interaction.user.id, 'thumbnail'),
