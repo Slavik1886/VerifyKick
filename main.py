@@ -1325,7 +1325,7 @@ async def track_telegram(interaction: discord.Interaction, telegram: str, channe
     await interaction.response.send_message(f"✅ Додано відстеження Telegram-каналу: `{telegram}`. Новини будуть поститись у {channel.mention}", ephemeral=True)
 
 # === ТАСК ДЛЯ ПЕРЕВІРКИ ВСІХ TELEGRAM-КАНАЛІВ ===
-@tasks.loop(minutes=20)
+@tasks.loop(minutes=60)
 async def telegram_channels_autopost():
     for guild in bot.guilds:
         guild_id = str(guild.id)
@@ -1518,7 +1518,7 @@ async def set_official_news_channel(interaction: discord.Interaction, channel: d
     save_official_news_channels()
     await interaction.response.send_message(f"✅ Канал для офіційних новин встановлено: {channel.mention}", ephemeral=True)
 
-@tasks.loop(minutes=20)
+@tasks.loop(minutes=60)
 async def official_news_autopost():
     sources = [
         {"name": "Google News WoT", "url": GOOGLE_NEWS_RSS},
