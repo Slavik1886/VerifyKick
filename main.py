@@ -1306,7 +1306,7 @@ async def track_telegram(interaction: discord.Interaction, telegram: str, channe
     await interaction.response.send_message(f"✅ Додано відстеження Telegram-каналу: `{telegram}`. Новини будуть поститись у {channel.mention}", ephemeral=True)
 
 # === ТАСК ДЛЯ ПЕРЕВІРКИ ВСІХ TELEGRAM-КАНАЛІВ ===
-@tasks.loop(minutes=60)
+@tasks.loop(minutes=20)
 async def telegram_channels_autopost():
     for guild in bot.guilds:
         guild_id = str(guild.id)
