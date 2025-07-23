@@ -1499,7 +1499,7 @@ async def set_official_news_channel(interaction: discord.Interaction, channel: d
     save_official_news_channels()
     await interaction.response.send_message(f"✅ Канал для офіційних новин встановлено: {channel.mention}", ephemeral=True)
 
-@tasks.loop(minutes=60)
+@tasks.loop(minutes=20)
 async def official_news_autopost():
     sources = [
         {"name": "Google News WoT", "url": GOOGLE_NEWS_RSS},
