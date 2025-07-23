@@ -1526,6 +1526,26 @@ async def official_news_autopost():
                 except:
                     last_url = None
                 new_entries = []
+                if not last_url:
+                    # Якщо це перший запуск — постимо лише одну (найсвіжішу) новину
+                    n = news[0]
+                    post_text = clean_html(n.get('summary') or n.get('description') or '')
+                    if not post_text:
+                        post_text = n.get('title', '')
+                    embed = discord.Embed(
+                        title=n['title'],
+                        url=n['link'],
+                        description=post_text,
+                        color=discord.Color.gold(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.set_footer(text=f"Офіційне джерело: {source['name']}")
+                    if n.get('image'):
+                        embed.set_image(url=n['image'])
+                    await channel.send(embed=embed)
+                    with open(last_url_file, 'w', encoding='utf-8') as f:
+                        json.dump({'last_url': n['link']}, f)
+                    continue
                 for n in news:
                     if n['link'] == last_url:
                         break
