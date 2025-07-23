@@ -693,8 +693,10 @@ class SendEmbedModal(Modal):
         super().__init__(title="Створити Embed")
         self.title_input = TextInput(label="Заголовок", required=True, max_length=256)
         self.description_input = TextInput(label="Текст повідомлення", style=discord.TextStyle.long, required=True, max_length=2000)
+        self.footer_input = TextInput(label="Підпис (footer, опціонально)", required=False, max_length=256)
         self.add_item(self.title_input)
         self.add_item(self.description_input)
+        self.add_item(self.footer_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.get(interaction.user.id)
         if not data:
@@ -702,6 +704,7 @@ class SendEmbedModal(Modal):
             return
         data.title = self.title_input.value
         data.description = self.description_input.value
+        data.footer = self.footer_input.value.strip() if self.footer_input.value else None
         # Далі — thumbnail
         await interaction.response.send_message(
             "Бажаєте додати зображення-колонтитул (thumbnail)? Завантажте файл або натисніть 'Пропустити'.",
@@ -763,164 +766,12 @@ async def on_message(message):
             )
         elif not data.image_url:
             data.image_url = message.attachments[0].url
-            # Далі — підпис
+            # Далі — підпис (footer вже у модалі, тому просто можна завершити або надіслати embed)
             await message.channel.send(
-                "Введіть підпис (footer) для embed (або залиште порожнім):",
+                "Зображення додано. Завершіть створення embed через форму.",
                 view=None
             )
-            await message.author.send_modal(SendEmbedFooterModal())
         await message.delete(delay=1)
-
-class SendEmbedFooterModal(Modal):
-    def __init__(self):
-        super().__init__(title="Додати підпис (footer, опціонально)")
-        self.footer_input = TextInput(label="Підпис (footer)", required=False, max_length=256)
-        self.add_item(self.footer_input)
-    async def on_submit(self, interaction):
-        data = send_embed_cache.pop(interaction.user.id, None)
-        if not data:
-            await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
-            return
-        data.footer = self.footer_input.value.strip() if self.footer_input.value else None
-        channel = interaction.guild.get_channel(data.channel_id)
-        if not channel or not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("❌ Канал не знайдено або не є текстовим!", ephemeral=True)
-            return
-        embed = discord.Embed(title=data.title, description=data.description, color=discord.Color.blurple(), timestamp=datetime.utcnow())
-        if data.thumbnail_url:
-            embed.set_thumbnail(url=data.thumbnail_url)
-        if data.image_url:
-            embed.set_image(url=data.image_url)
-        if data.footer:
-            embed.set_footer(text=data.footer)
-        try:
-            await channel.send(embed=embed)
-            await interaction.response.send_message(f"✅ Embed-повідомлення надіслано у {channel.mention}", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Помилка надсилання: {e}", ephemeral=True)
-
-# Заміна старої команди send_embed
-@bot.tree.command(name="send_embed", description="Зручно створити embed-повідомлення через діалог")
-async def send_embed(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Ця команда доступна лише адміністраторам", ephemeral=True)
-        return
-    text_channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.user).send_messages]
-    if not text_channels:
-        await interaction.response.send_message("❌ Немає доступних текстових каналів", ephemeral=True)
-        return
-    view = SendEmbedChannelView(interaction.user, text_channels)
-    await interaction.response.send_message("Оберіть канал для embed-повідомлення:", view=view, ephemeral=True)
-
-@bot.tree.command(name="setup_welcome", description="Налаштувати канал для привітальних повідомлень")
-@app_commands.describe(
-    channel="Канал для привітальних повідомлень"
-)
-async def setup_welcome(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
-    welcome_messages[str(interaction.guild.id)] = {
-        "channel_id": channel.id
-    }
-    save_welcome_data()
-    await interaction.response.send_message(
-        f"✅ Привітальні повідомлення будуть надсилатися у канал {channel.mention}\n"
-        f"Тепер при вході нового учасника буде показано:\n"
-        f"- Аватар користувача\n"
-        f"- Ім'я та мітку\n"
-        f"- Хто запросив\n"
-        f"- Призначену роль\n"
-        f"- Дату реєстрації в Discord\n"
-        f"- Час приєднання до сервера",
-        ephemeral=True
-    )
-
-@bot.tree.command(name="disable_welcome", description="Вимкнути привітальні повідомлення")
-async def disable_welcome(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
-    if str(interaction.guild.id) in welcome_messages:
-        welcome_messages.pop(str(interaction.guild.id))
-        save_welcome_data()
-    await interaction.response.send_message(
-        "✅ Привітальні повідомлення вимкнено",
-        ephemeral=True
-    )
-
-# ========== ЗАЯВКА НА ПРИЄДНАННЯ ==========
-
-MOD_CHANNEL_ID = 1318890524643557406  # <-- ID каналу для модерації заявок
-GUILD_INVITE_LINK = "https://discord.gg/yourinvite"  # <-- Вкажіть посилання на запрошення
-
-# === ДОДАТКОВІ СТРУКТУРИ ДЛЯ ЗМІНИ НІКУ ===
-NICK_NOTIFY_CHANNEL_FILE = os.path.join(DATA_DIR, 'nick_notify_channel.json')
-nick_notify_channel = {}  # {guild_id: channel_id}
-
-def load_nick_notify_channel():
-    try:
-        with open(NICK_NOTIFY_CHANNEL_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-    except Exception as e:
-        print(f"[ERROR] Failed to load nick_notify_channel.json: {e}")
-        return {}
-
-def save_nick_notify_channel():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(NICK_NOTIFY_CHANNEL_FILE, 'w', encoding='utf-8') as f:
-            json.dump(nick_notify_channel, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[ERROR] Failed to save nick_notify_channel.json: {e}")
-
-nick_notify_channel = load_nick_notify_channel()
-
-# Тимчасове зберігання ігрових ніків для заявок
-PENDING_NICKNAMES_FILE = os.path.join(DATA_DIR, 'pending_nicknames.json')
-pending_nicknames = {}  # {user_id: nickname}
-
-def load_pending_nicknames():
-    try:
-        with open(PENDING_NICKNAMES_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            print(f"[DEBUG] Loaded pending_nicknames from file: {data}")
-            return data
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-    except Exception as e:
-        print(f"[ERROR] Failed to load pending_nicknames.json: {e}")
-        return {}
-
-def save_pending_nicknames():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(PENDING_NICKNAMES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(pending_nicknames, f, ensure_ascii=False, indent=2)
-        print(f"[DEBUG] Saved pending_nicknames to file: {pending_nicknames}")
-    except Exception as e:
-        print(f"[ERROR] Failed to save pending_nicknames: {e}")
-
-pending_nicknames = load_pending_nicknames()
-print(f"[DEBUG] Initial pending_nicknames: {pending_nicknames}")
-
-@bot.tree.command(name="purge", description="Видалити N останніх повідомлень у каналі")
-@app_commands.describe(amount="Кількість повідомлень для видалення")
-async def purge(interaction: discord.Interaction, amount: int):
-    if not interaction.user.guild_permissions.manage_messages:
-        return await interaction.response.send_message("❌ Потрібні права на керування повідомленнями", ephemeral=True)
-    if amount < 1 or amount > 100:
-        return await interaction.response.send_message("❌ Вкажіть число від 1 до 100", ephemeral=True)
-    try:
-        await interaction.response.defer(ephemeral=True)
-        deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(f"✅ Видалено {len(deleted)} повідомлень", ephemeral=True)
-    except discord.errors.DiscordServerError:
-        await interaction.followup.send("❌ Discord тимчасово недоступний. Спробуйте ще раз пізніше.", ephemeral=True)
-    except discord.errors.NotFound:
-        await interaction.followup.send("❌ Взаємодію прострочено або не знайдено.", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Помилка: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="mute", description="Видати мут користувачу")
 @app_commands.describe(
