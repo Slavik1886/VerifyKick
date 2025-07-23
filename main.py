@@ -1583,6 +1583,21 @@ async def new_on_ready():
         print(f"[ERROR] Не вдалося запустити official_news_autopost: {e}")
 bot.on_ready = new_on_ready
 
+@bot.tree.command(name="change_role", description="Змінити роль користувачу: зняти стару і видати нову")
+@app_commands.describe(member="Користувач", old_role="Стара роль", new_role="Нова роль")
+async def change_role(interaction: discord.Interaction, member: discord.Member, old_role: discord.Role, new_role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Потрібні права адміністратора", ephemeral=True)
+    try:
+        if old_role in member.roles:
+            await member.remove_roles(old_role, reason="Зміна ролі через команду change_role")
+        await member.add_roles(new_role, reason="Зміна ролі через команду change_role")
+        await interaction.response.send_message(
+            f"✅ {member.mention}: знято роль {old_role.mention}, видано роль {new_role.mention}", ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
+
 if __name__ == '__main__':
     print("Запуск бота...")
     bot.run(TOKEN) 
