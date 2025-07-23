@@ -216,9 +216,11 @@ async def on_member_join(member):
                     return
 
                 # Створюємо форму для введення ніку
-                class NicknameModal(Modal, title="Вкажіть свій нікнейм"):
-                    nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
-                    
+                class NicknameModal(Modal):
+                    def __init__(self):
+                        super().__init__(title="Вкажіть свій нікнейм")
+                        self.nickname = TextInput(label="Ігровий нік (WoT)", required=True, max_length=32)
+                        self.add_item(self.nickname)
                     async def on_submit(self, interaction: discord.Interaction):
                         try:
                             nickname_value = self.nickname.value.strip()
@@ -685,24 +687,30 @@ class SendEmbedChannelDropdown(Select):
         await interaction.response.send_modal(SendEmbedTitleModal())
         self.parent_view.stop()
 
-class SendEmbedTitleModal(Modal, title="Введіть заголовок"):
-    title = TextInput(label="Заголовок", required=True, max_length=256)
+class SendEmbedTitleModal(Modal):
+    def __init__(self):
+        super().__init__(title="Введіть заголовок")
+        self.title_input = TextInput(label="Заголовок", required=True, max_length=256)
+        self.add_item(self.title_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.get(interaction.user.id)
         if not data:
             await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
             return
-        data.title = self.title.value
+        data.title = self.title_input.value
         await interaction.response.send_modal(SendEmbedDescriptionModal())
 
-class SendEmbedDescriptionModal(Modal, title="Введіть текст повідомлення"):
-    description = TextInput(label="Текст повідомлення", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+class SendEmbedDescriptionModal(Modal):
+    def __init__(self):
+        super().__init__(title="Введіть текст повідомлення")
+        self.description_input = TextInput(label="Текст повідомлення", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+        self.add_item(self.description_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.get(interaction.user.id)
         if not data:
             await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
             return
-        data.description = self.description.value
+        data.description = self.description_input.value
         # Після тексту — запит на thumbnail
         await interaction.response.send_message(
             "Бажаєте додати зображення-колонтитул (thumbnail)? Завантажте файл або натисніть 'Пропустити'.",
@@ -772,14 +780,17 @@ async def on_message(message):
             await message.author.send_modal(SendEmbedFooterModal())
         await message.delete(delay=1)
 
-class SendEmbedFooterModal(Modal, title="Додати підпис (footer, опціонально)"):
-    footer = TextInput(label="Підпис (footer)", required=False, max_length=256)
+class SendEmbedFooterModal(Modal):
+    def __init__(self):
+        super().__init__(title="Додати підпис (footer, опціонально)")
+        self.footer_input = TextInput(label="Підпис (footer)", required=False, max_length=256)
+        self.add_item(self.footer_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.pop(interaction.user.id, None)
         if not data:
             await interaction.response.send_message("❌ Внутрішня помилка (немає стану)", ephemeral=True)
             return
-        data.footer = self.footer.value.strip() if self.footer.value else None
+        data.footer = self.footer_input.value.strip() if self.footer_input.value else None
         channel = interaction.guild.get_channel(data.channel_id)
         if not channel or not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message("❌ Канал не знайдено або не є текстовим!", ephemeral=True)
