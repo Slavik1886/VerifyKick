@@ -359,6 +359,12 @@ async def on_member_join(member):
                                                             f"✅ Користувача схвалено\nНадано роль {role.mention}\nВстановлено нік: {saved_nick}",
                                                             ephemeral=True
                                                         )
+                                                        # Видалити повідомлення через 60 секунд
+                                                        await asyncio.sleep(60)
+                                                        try:
+                                                            await button_interaction.message.delete()
+                                                        except Exception as e:
+                                                            print(f"[ERROR] Не вдалося видалити повідомлення заявки: {e}")
                                                     except Exception as e:
                                                         print(f"[ERROR] Помилка зміни ніку: {e}")
                                                         await button_interaction.response.send_message(
@@ -399,6 +405,12 @@ async def on_member_join(member):
                                         
                                         await member.kick(reason="Заявку відхилено")
                                         await button_interaction.response.send_message("❌ Користувача відхилено та вилучено з сервера", ephemeral=True)
+                                        # Видалити повідомлення через 60 секунд
+                                        await asyncio.sleep(60)
+                                        try:
+                                            await button_interaction.message.delete()
+                                        except Exception as e:
+                                            print(f"[ERROR] Не вдалося видалити повідомлення заявки: {e}")
                                     except Exception as e:
                                         await button_interaction.response.send_message(f"❌ Помилка: {e}", ephemeral=True)
                                     
@@ -1220,6 +1232,13 @@ async def fetch_rss_news(url):
         if not image:
             html = entry.summary if 'summary' in entry else entry.get('description', '')
             image = extract_first_img_src(html)
+        # Додаємо логіку для YouTube
+        if not image and 'youtube.com/watch' in entry.link:
+            from urllib.parse import urlparse, parse_qs
+            url_data = urlparse(entry.link)
+            video_id = parse_qs(url_data.query).get('v')
+            if video_id:
+                image = f'https://img.youtube.com/vi/{video_id[0]}/maxresdefault.jpg'
         news.append({
             'title': entry.title,
             'link': entry.link,
