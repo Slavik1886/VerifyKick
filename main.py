@@ -703,7 +703,7 @@ class SendEmbedTitleModal(Modal):
 class SendEmbedDescriptionModal(Modal):
     def __init__(self):
         super().__init__(title="Введіть текст повідомлення")
-        self.description_input = TextInput(label="Текст повідомлення", style=discord.TextStyle.paragraph, required=True, max_length=2000)
+        self.description_input = TextInput(label="Текст повідомлення", style=discord.TextStyle.long, required=True, max_length=2000)
         self.add_item(self.description_input)
     async def on_submit(self, interaction):
         data = send_embed_cache.get(interaction.user.id)
